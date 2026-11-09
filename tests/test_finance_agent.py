@@ -23,6 +23,9 @@ class FinanceIntentTests(unittest.TestCase):
     def test_ignores_hypothetical(self):
         self.assertFalse(looks_like_finance_entry("Если бы потратил 500 рублей, хватило бы на бензин"))
 
+    def test_ignores_conditional_would_statement(self):
+        self.assertFalse(looks_like_finance_entry("Я бы потратил 500 рублей на бензин"))
+
     def test_ignores_finance_question(self):
         self.assertFalse(looks_like_finance_entry("Сколько я потратил на машину в этом месяце?"))
 
