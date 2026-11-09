@@ -17,6 +17,12 @@ class FinanceIntentTests(unittest.TestCase):
     def test_ignores_future_purchase_plan(self):
         self.assertFalse(looks_like_finance_entry("Хочу купить зимнюю резину за 20 тысяч"))
 
+    def test_ignores_negated_purchase(self):
+        self.assertFalse(looks_like_finance_entry("Не потратил 500 рублей на продукты"))
+
+    def test_ignores_hypothetical(self):
+        self.assertFalse(looks_like_finance_entry("Если бы потратил 500 рублей, хватило бы на бензин"))
+
     def test_ignores_finance_question(self):
         self.assertFalse(looks_like_finance_entry("Сколько я потратил на машину в этом месяце?"))
 
