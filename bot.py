@@ -13,6 +13,7 @@ import httpx
 from dotenv import load_dotenv
 from groq import AsyncGroq
 from finance_agent import looks_like_finance_entry, looks_like_finance_question, parse_finance_response
+from project_agent import looks_like_project_intent, parse_project_response
 from supabase import create_client, Client
 
 from telegram import (
@@ -3134,6 +3135,336 @@ async def plan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ---------- естественный язык и материалы проектов ----------
+
+PROJECT_AGENT_PROMPT = """
+Ты — диспетчер проектных действий личного Telegram-агента.
+Верни только JSON с полями:
+{
+  "action": "create_project|add_stage|add_task|add_note|update_project|project_query",
+  "project_title": "точное название из списка или пустая строка",
+  "title": "название нового проекта",
+  "description": "описание нового проекта",
+  "goal": "цель нового проекта",
+  "content": "текст этапа, задачи или заметки",
+  "due_date": "дата ГГГГ-ММ-ДД или пустая строка",
+  "field": "description|goal|status|deadline|result",
+  "value": "новое значение поля",
+  "confidence": 0.0,
+  "question": "уточняющий вопрос"
+}
+Правила:
+- Список проектов ниже — единственный источник допустимых названий. Не выдумывай project_id и не подбирай похожий проект.
+- Создание нового проекта разрешено только при прямой просьбе создать проект.
+- Для добавления этапа/задачи/заметки укажи точное project_title из списка.
+- Вопросы о статусе и прогрессе — project_query.
+- Изменение полей проекта — update_project, но только если пользователь явно попросил.
+- Удаление проекта, этапов, задач и материалов этим агентом запрещено.
+- Не превращай идеи, планы и гипотетические фразы в записи.
+- Если не хватает названия проекта, содержания или даты, верни clarification.
+- confidence от 0 до 1; ниже 0.75 действие не будет выполнено.
+- Пиши по-русски. Никаких действий в БД не выполняй.
+""".strip()
+
+
+async def prepare_project_action(update: Update, context: ContextTypes.DEFAULT_TYPE, user_message: str):
+    user_id = update.effective_user.id
+    try:
+        projects = await pj_list(user_id)
+        today = await user_today(user_id)
+        source = {
+            "today": today.isoformat(),
+            "projects": [
+                {"id": p["id"], "title": p["title"], "status": p["status"],
+                 "goal": p.get("goal"), "deadline": p.get("deadline")}
+                for p in projects
+            ],
+            "message": user_message,
+        }
+        response = await ai.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": PROJECT_AGENT_PROMPT},
+                {"role": "user", "content": json.dumps(source, ensure_ascii=False)},
+            ],
+            temperature=0.1,
+            max_tokens=900,
+            response_format={"type": "json_object"},
+        )
+        raw = (response.choices[0].message.content or "").strip()
+        start, end = raw.find("{"), raw.rfind("}")
+        if start < 0 or end < start:
+            raise ValueError("Модель не вернула JSON")
+        draft = parse_project_response(raw[start:end + 1], today, projects)
+    except ValueError as error:
+        await update.effective_message.reply_text(
+            f"Не удалось безопасно разобрать проектное действие: {error}. Переформулируй запрос.",
+            reply_markup=MAIN_MENU,
+        )
+        return
+    except Exception:
+        logging.exception("Не удалось подготовить проектное действие")
+        await update.effective_message.reply_text(
+            "Не получилось обработать запрос к проекту. Ничего не изменено; попробуй ещё раз.",
+            reply_markup=MAIN_MENU,
+        )
+        return
+
+    if draft.get("clarification"):
+        await update.effective_message.reply_text(draft["clarification"], reply_markup=MAIN_MENU)
+        return
+
+    action = draft["action"]
+    if action == "project_query":
+        if not draft.get("project_id"):
+            await projects_command(update, ArgsContext(context, []))
+            return
+        project = await pj_get(user_id, draft["project_id"])
+        if not project:
+            await update.effective_message.reply_text("Проект больше не найден. Обнови список: /projects")
+            return
+        items = await pj_items(user_id, project["id"])
+        await reply_long(
+            update.effective_message,
+            build_project_card(project, items, today),
+            inline=project_card_keyboard(project["id"]),
+        )
+        return
+
+    context.user_data["project_action_pending"] = draft
+    if action == "create_project":
+        preview = f"Создать проект «{draft['title']}»?"
+        if draft.get("goal"):
+            preview += f"\nЦель: {draft['goal']}"
+        if draft.get("description"):
+            preview += f"\nОписание: {draft['description']}"
+    elif action.startswith("add_"):
+        labels = {"add_stage": "этап", "add_task": "задачу", "add_note": "заметку"}
+        preview = (
+            f"Добавить {labels[action]} в проект «{draft['project_title']}»?\n"
+            f"{draft['content']}"
+        )
+        if draft.get("due_date"):
+            preview += f"\nСрок: {fmt_full_date(draft['due_date'].isoformat())}"
+    else:
+        field_names = {
+            "description": "описание", "goal": "цель", "status": "статус",
+            "deadline": "срок", "result": "результат",
+        }
+        preview = (
+            f"Изменить {field_names[draft['field']]} проекта «{draft['project_title']}»?\n"
+            f"Новое значение: {draft.get('value') or 'очистить поле'}"
+        )
+    await update.effective_message.reply_text(
+        "Проверь черновик. До подтверждения ничего не записано.\n\n" + preview,
+        reply_markup=ikb([[
+            ib("✅ Подтвердить", "pjact:confirm"),
+            ib("❌ Отмена", "pjact:cancel"),
+        ]]),
+    )
+
+
+async def project_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not is_authorized(update):
+        await query.answer("Доступ запрещён.", show_alert=True)
+        return
+    action = (query.data or "").split(":", 1)[-1]
+    draft = context.user_data.get("project_action_pending")
+    if action == "cancel":
+        context.user_data.pop("project_action_pending", None)
+        await query.answer("Отменено")
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.message.reply_text("Отменено. Данные проекта не изменены.", reply_markup=MAIN_MENU)
+        return
+    if action != "confirm" or not draft:
+        await query.answer("Черновик устарел. Отправь запрос ещё раз.", show_alert=True)
+        return
+
+    user_id = update.effective_user.id
+    try:
+        kind = draft["action"]
+        if kind == "create_project":
+            current = await pj_list(user_id)
+            if any(p["title"].casefold().strip() == draft["title"].casefold().strip() for p in current):
+                raise ValueError("Такой проект уже существует")
+            project = await pj_create(user_id, draft["title"])
+            fields = {}
+            if draft.get("description"):
+                fields["description"] = draft["description"]
+            if draft.get("goal"):
+                fields["goal"] = draft["goal"]
+            if fields:
+                await pj_update(user_id, project["id"], **fields)
+            result_text = f"Проект №{project['id']} «{project['title']}» создан."
+            open_id = project["id"]
+        elif kind in {"add_stage", "add_task", "add_note"}:
+            project = await pj_get(user_id, int(draft["project_id"]))
+            if not project:
+                raise ValueError("Проект не найден или недоступен")
+            item_kind = kind.removeprefix("add_")
+            item = await pj_add_item(
+                user_id, project["id"], item_kind, draft["content"], draft.get("due_date")
+            )
+            result_text = f"Добавлено в «{project['title']}»: запись №{item['id']}."
+            open_id = project["id"]
+        elif kind == "update_project":
+            project = await pj_get(user_id, int(draft["project_id"]))
+            if not project:
+                raise ValueError("Проект не найден или недоступен")
+            if not await pj_update(user_id, project["id"], **{draft["field"]: draft.get("value")}):
+                raise ValueError("База не подтвердила изменение")
+            result_text = f"Проект «{project['title']}» обновлён."
+            open_id = project["id"]
+        else:
+            raise ValueError("Неизвестное действие")
+    except Exception as error:
+        logging.exception("Не удалось сохранить проектное действие")
+        await query.answer("Не удалось сохранить. Черновик оставлен.", show_alert=True)
+        await query.message.reply_text(
+            f"Запись не подтверждена базой: {error}. Попробуй повторить действие.",
+            reply_markup=MAIN_MENU,
+        )
+        return
+
+    context.user_data.pop("project_action_pending", None)
+    await query.answer("Сохранено")
+    await query.edit_message_reply_markup(reply_markup=None)
+    await query.message.reply_text(
+        "✅ " + result_text,
+        reply_markup=ikb([[ib("📂 Открыть проект", f"pj:open:{open_id}")]]),
+    )
+
+
+async def project_asset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.effective_message.reply_text("Формат: /asset номер_проекта. Затем отправь фото или документ.")
+        return
+    user_id = update.effective_user.id
+    project_id = int(context.args[0])
+    project = await pj_get(user_id, project_id)
+    if not project:
+        await update.effective_message.reply_text("Проект не найден. Проверь /projects.")
+        return
+    context.user_data["project_asset_target"] = project_id
+    await update.effective_message.reply_text(
+        f"Отправь одним следующим сообщением фото или документ для проекта «{project['title']}». "
+        "Файл будет привязан к проекту; /cancel отменит ожидание.",
+        reply_markup=CANCEL_KB,
+    )
+
+
+async def project_assets_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.effective_message.reply_text("Формат: /assets номер_проекта")
+        return
+    user_id = update.effective_user.id
+    project_id = int(context.args[0])
+    project = await pj_get(user_id, project_id)
+    if not project:
+        await update.effective_message.reply_text("Проект не найден. Проверь /projects.")
+        return
+    result = await db_call(
+        supabase.table("agent_project_assets")
+        .select("id, telegram_file_id, media_type, file_name, caption, created_at")
+        .eq("telegram_id", user_id)
+        .eq("project_id", project_id)
+        .order("id")
+        .limit(20)
+        .execute
+    )
+    assets = result.data or []
+    if not assets:
+        await update.effective_message.reply_text(f"В проекте «{project['title']}» пока нет материалов.")
+        return
+    await update.effective_message.reply_text(
+        f"Материалы проекта «{project['title']}» — последние {len(assets)}:"
+    )
+    for asset in assets:
+        caption = f"Материал №{asset['id']}: {asset.get('file_name') or asset.get('media_type')}"
+        if asset.get("caption"):
+            caption += f"\n{clip(asset['caption'], 700)}"
+        try:
+            if asset["media_type"] == "photo":
+                await update.effective_message.reply_photo(asset["telegram_file_id"], caption=caption[:1000])
+            else:
+                await update.effective_message.reply_document(asset["telegram_file_id"], caption=caption[:1000])
+        except Exception:
+            logging.exception("Не удалось повторно отправить материал проекта %s", asset["id"])
+            await update.effective_message.reply_text(caption)
+
+
+async def handle_project_asset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+    user_id = update.effective_user.id
+    project_id = context.user_data.get("project_asset_target")
+    if not project_id:
+        await update.effective_message.reply_text(
+            "Чтобы прикрепить материал к проекту, сначала напиши /asset номер_проекта."
+        )
+        return
+    project = await pj_get(user_id, int(project_id))
+    if not project:
+        context.user_data.pop("project_asset_target", None)
+        await update.effective_message.reply_text("Проект не найден. Ожидание файла отменено.")
+        return
+
+    message = update.effective_message
+    if message.photo:
+        media = message.photo[-1]
+        media_type = "photo"
+        file_id = media.file_id
+        unique_id = media.file_unique_id
+        file_name = None
+        mime_type = "image/jpeg"
+    elif message.document:
+        media = message.document
+        media_type = "document"
+        file_id = media.file_id
+        unique_id = media.file_unique_id
+        file_name = media.file_name
+        mime_type = media.mime_type
+    else:
+        return
+
+    try:
+        result = await db_call(
+            supabase.table("agent_project_assets")
+            .insert({
+                "telegram_id": user_id,
+                "project_id": int(project_id),
+                "telegram_file_id": file_id,
+                "telegram_file_unique_id": unique_id,
+                "media_type": media_type,
+                "file_name": file_name,
+                "mime_type": mime_type,
+                "caption": clip(message.caption or "", 1000) or None,
+                "source_message_id": message.message_id,
+            })
+            .execute
+        )
+        if not result.data:
+            raise RuntimeError("Supabase не вернул созданную запись")
+    except Exception:
+        logging.exception("Не удалось сохранить материал проекта")
+        await update.effective_message.reply_text("Не удалось сохранить материал. Ожидание оставлено; попробуй отправить файл ещё раз.")
+        return
+
+    context.user_data.pop("project_asset_target", None)
+    await update.effective_message.reply_text(
+        f"✅ Материал сохранён в проект «{project['title']}». Посмотреть: /assets {project_id}",
+        reply_markup=MAIN_MENU,
+    )
+
+
 # ===================== ОТВЕТ МОДЕЛИ =====================
 
 async def ask_ai(user_id: int, message: str, extra_system: str = "") -> str:
@@ -3968,7 +4299,7 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
-    keys = ("await", "finance_clarification_pending", "finance_draft_pending", "todoist_pending_action")
+    keys = ("await", "finance_clarification_pending", "finance_draft_pending", "todoist_pending_action", "project_action_pending", "project_asset_target")
     had_pending = any(key in context.user_data for key in keys)
     for key in keys:
         context.user_data.pop(key, None)
@@ -4020,6 +4351,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if looks_like_finance_question(user_message):
         await update.effective_message.chat.send_action("typing")
         await answer_finance_question(update, context, user_message)
+        return
+
+    if context.user_data.get("project_action_pending"):
+        if user_message.strip().lower() in {"отмена", "отмени", "cancel"}:
+            context.user_data.pop("project_action_pending", None)
+            await update.effective_message.reply_text("Черновик проектного действия отменён. Данные не изменены.", reply_markup=MAIN_MENU)
+        else:
+            await update.effective_message.reply_text(
+                "У тебя есть неподтверждённое действие по проекту. Подтверди или отмени его кнопками под сообщением."
+            )
+        return
+
+    if looks_like_project_intent(user_message):
+        await update.effective_message.chat.send_action("typing")
+        await prepare_project_action(update, context, user_message)
         return
 
     await update.effective_message.chat.send_action("typing")
@@ -4561,7 +4907,7 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 BACKUP_TABLES = [
     "profiles", "conversations", "memories", "daily_surveys", "analytics_reports",
     "daily_logs", "ai_insights", "finance_transactions", "finance_payments",
-    "finance_purchases", "agent_projects", "agent_project_items",
+    "finance_purchases", "agent_projects", "agent_project_items", "agent_project_assets",
 ]
 BACKUP_PAGE = 1000
 BACKUP_MAX_ROWS = 200_000
@@ -4904,6 +5250,9 @@ def main():
     app.add_handler(CommandHandler("p_undo", p_undo_command))
     app.add_handler(CommandHandler("p_del", p_del_command))
     app.add_handler(CommandHandler("project_del", project_del_command))
+    app.add_handler(CommandHandler("asset", project_asset_command))
+    app.add_handler(CommandHandler("assets", project_assets_command))
+    app.add_handler(CallbackQueryHandler(project_action_callback, pattern="^pjact:"))
     app.add_handler(CallbackQueryHandler(plan_callback, pattern="^plan:"))
     app.add_handler(CallbackQueryHandler(report_callback, pattern="^report:"))
     app.add_handler(CallbackQueryHandler(todoist_confirm_callback, pattern="^td:"))
@@ -4920,6 +5269,7 @@ def main():
     )
     app.add_handler(CallbackQueryHandler(ui_callback, pattern=r"^(fin|pay|buy|pj|mem|sched|tz|ui):"))
 
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_project_asset))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )
