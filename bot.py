@@ -3659,6 +3659,8 @@ async def answer_project_expense_query(user_id: int, message: str) -> str | None
     elif "недел" in lowered:
         start, end = finance_period("week", today)
         period_title = "за эту неделю"
+    elif "уже" in lowered or "всего" in lowered:
+        start, end, period_title = dt_date(2000, 1, 1), today, "за всё время"
     else:
         start, end = finance_period("month", today)
         period_title = "за этот месяц"
