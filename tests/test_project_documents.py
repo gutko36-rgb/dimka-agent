@@ -1,6 +1,5 @@
 import io
 import unittest
-import zipfile
 from datetime import datetime, timezone
 
 from project_documents import (
@@ -31,6 +30,25 @@ class DocumentExtractionTests(unittest.TestCase):
     def test_rejects_fake_pdf(self):
         with self.assertRaises(ValueError):
             extract_document_text("fake.pdf", "application/pdf", b"not a pdf")
+
+    def test_reads_pdf_and_reports_no_text_layer(self):
+        from pypdf import PdfWriter
+        stream = io.BytesIO()
+        writer = PdfWriter()
+        writer.add_blank_page(width=100, height=100)
+        writer.write(stream)
+        result = extract_document_text("blank.pdf", "application/pdf", stream.getvalue())
+        self.assertEqual(result["status"], "no_text")
+        self.assertEqual(result["pages"], 1)
+
+    def test_enforces_pdf_page_limit(self):
+        from pypdf import PdfWriter
+        stream = io.BytesIO()
+        writer = PdfWriter()
+        writer.add_blank_page(width=100, height=100)
+        writer.write(stream)
+        with self.assertRaises(ValueError):
+            extract_document_text("blank.pdf", "application/pdf", stream.getvalue(), max_pages=0)
 
     def test_rejects_invalid_docx(self):
         with self.assertRaises(ValueError):
