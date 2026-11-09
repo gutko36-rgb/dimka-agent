@@ -89,12 +89,23 @@ def parse_project_response(
             "clarification": str(payload.get("question") or "Уточни, что именно нужно сделать с проектом.")[:400],
         }
 
-    projects_by_title = {_norm(str(p.get("title", ""))): p for p in projects if p.get("title")}
+    projects_by_title: dict[str, list[dict[str, Any]]] = {}
+    for row in projects:
+        if row.get("title"):
+            projects_by_title.setdefault(_norm(str(row["title"])), []).append(row)
     project_title = str(payload.get("project_title") or "").strip()
     project = None
     if action != "create_project" and project_title:
-        project = projects_by_title.get(_norm(project_title))
-        if not project:
+        matches = projects_by_title.get(_norm(project_title), [])
+        if len(matches) > 1:
+            return {
+                "action": None,
+                "clarification": (
+                    f"Название «{project_title[:100]}» подходит нескольким проектам. "
+                    "Укажи полное название из /projects."
+                ),
+            }
+        if not matches:
             return {
                 "action": None,
                 "clarification": (
@@ -102,6 +113,7 @@ def parse_project_response(
                     "Проверь название в /projects или уточни его."
                 ),
             }
+        project = matches[0]
     elif action not in {"create_project", "project_query"}:
         return {"action": None, "clarification": "Уточни, к какому проекту относится запись."}
 
@@ -119,7 +131,7 @@ def parse_project_response(
         if len(title) > 100:
             raise ValueError("Название проекта слишком длинное")
         if _norm(title) in projects_by_title:
-            return {"action": None, "clarification": f"Проект «{title}» уже существует. Выбери его в /projects."}
+            return {"action": None, "clarification": f"Проект «{title}» уже существует или совпадает по названию. Выбери его в /projects."}
         result["title"] = title
         result["description"] = str(payload.get("description") or "").strip()[:1000] or None
         result["goal"] = str(payload.get("goal") or "").strip()[:1000] or None
