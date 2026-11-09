@@ -23,7 +23,7 @@ def looks_like_finance(text: str) -> bool:
 
 
 FOREIGN_CURRENCY_CUES = re.compile(
-    r"(?iu)(?:\\b(?:USD|EUR|KZT|UAH|GBP|доллар[а-яё]*|евро|тенге|гривн[а-яё]*|фунт[а-яё]*)\\b|[$€₸£])"
+    r"(?iu)(?:\b(?:USD|EUR|KZT|UAH|GBP|доллар[а-яё]*|евро|тенге|гривн[а-яё]*|фунт[а-яё]*)\b|[$€₸£])"
 )
 
 
