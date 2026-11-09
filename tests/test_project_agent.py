@@ -15,6 +15,9 @@ class ProjectIntentTests(unittest.TestCase):
     def test_ignores_regular_chat(self):
         self.assertFalse(looks_like_project_intent("Расскажи, как лучше организовать день"))
 
+    def test_does_not_capture_general_todoist_question(self):
+        self.assertFalse(looks_like_project_intent("Сколько задач на сегодня?"))
+
     def test_ignores_negated_instruction(self):
         self.assertFalse(looks_like_project_intent("Не добавляй заметку в проект Пульт"))
 
