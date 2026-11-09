@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from groq import AsyncGroq
 from supabase import create_client, Client
 
-from finance_agent import looks_like_finance, format_finance_operations, validate_finance_operations
+from finance_agent import looks_like_finance, has_foreign_currency, format_finance_operations, validate_finance_operations
 
 from telegram import (
     Update,
@@ -3620,6 +3620,11 @@ async def extract_finance_draft(user_id: int, message: str) -> tuple[list[dict] 
     Returns (operations, clarification). operations=None means this was not a finance request.
     """
     today = await user_today(user_id)
+    if has_foreign_currency(message):
+        return [], (
+            "В финансовом учёте сейчас используются рубли. "
+            "Пересчитай сумму в рубли и отправь её ещё раз. Ничего не записывал."
+        )
     projects = [p for p in await pj_list(user_id) if p.get("status") != "done"]
     project_lines = [
         f"- ID {p['id']}: {p['title']} [{p.get('status', 'active')}]"
