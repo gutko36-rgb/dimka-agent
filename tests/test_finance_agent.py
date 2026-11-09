@@ -4,6 +4,8 @@ from datetime import date
 from finance_agent import (
     format_finance_operations,
     has_foreign_currency,
+    is_project_expense_query,
+    find_mentioned_projects,
     looks_like_finance,
     validate_finance_operations,
 )
@@ -19,6 +21,16 @@ class FinanceIntentTests(unittest.TestCase):
         self.assertTrue(has_foreign_currency("потратил 20 долларов на такси"))
         self.assertTrue(has_foreign_currency("оплатил 10 EUR"))
         self.assertFalse(has_foreign_currency("потратил 500 рублей"))
+
+    def test_project_spending_question_detection(self):
+        self.assertTrue(is_project_expense_query("Сколько я потратил на Пульт в этом месяце?"))
+        self.assertTrue(is_project_expense_query("Какова сумма расходов на проект за неделю?"))
+        self.assertFalse(is_project_expense_query("Сегодня потратил 500 рублей на еду"))
+
+    def test_project_name_short_reference(self):
+        projects = [{"id": 3, "title": "Пульт 2.0"}, {"id": 4, "title": "Автоматизация гаража"}]
+        matches = find_mentioned_projects("Сколько потратил на Пульт?", projects)
+        self.assertEqual([p["id"] for p in matches], [3])
 
     def test_single_expense(self):
         ops, error = validate_finance_operations(
