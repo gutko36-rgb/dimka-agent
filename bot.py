@@ -3358,7 +3358,10 @@ async def project_asset_command(update: Update, context: ContextTypes.DEFAULT_TY
     if not project:
         await update.effective_message.reply_text("Проект не найден. Проверь /projects.")
         return
-    context.user_data["project_asset_target"] = project_id
+    context.user_data["project_asset_target"] = {
+        "project_id": project_id,
+        "expires_at": (datetime.now(dt_timezone.utc) + timedelta(minutes=15)).isoformat(),
+    }
     await update.effective_message.reply_text(
         f"Отправь одним следующим сообщением фото или документ для проекта «{project['title']}». "
         "Файл будет привязан к проекту; /cancel отменит ожидание.",
@@ -3414,12 +3417,21 @@ async def handle_project_asset(update: Update, context: ContextTypes.DEFAULT_TYP
         await reject_unauthorized(update)
         return
     user_id = update.effective_user.id
-    project_id = context.user_data.get("project_asset_target")
-    if not project_id:
+    target = context.user_data.get("project_asset_target")
+    if not target:
         await update.effective_message.reply_text(
             "Чтобы прикрепить материал к проекту, сначала напиши /asset номер_проекта."
         )
         return
+    if isinstance(target, dict):
+        project_id = int(target.get("project_id", 0))
+        expires_at = datetime.fromisoformat(target["expires_at"])
+        if datetime.now(dt_timezone.utc) > expires_at:
+            context.user_data.pop("project_asset_target", None)
+            await update.effective_message.reply_text("Время ожидания файла истекло. Для нового файла снова напиши /asset ID.")
+            return
+    else:
+        project_id = int(target)
     project = await pj_get(user_id, int(project_id))
     if not project:
         context.user_data.pop("project_asset_target", None)
