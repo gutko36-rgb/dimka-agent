@@ -41,6 +41,15 @@ def looks_like_project_intent(message: str) -> bool:
         return False
     if not _READ_HINT.search(text):
         return False
+    # "Сколько задач на сегодня?" относится к Todoist, а не к проектам.
+    project_context = re.search(
+        r"\\b(?:проект(?:ы|а|е|у|ом)?|этап(?:ы|а|е|у|ов)?|заметк(?:а|и|у|е)|"
+        r"материал(?:ы|ов)?|ход работ|прогресс)\\b",
+        text,
+        re.IGNORECASE,
+    )
+    if not project_context:
+        return False
     return bool(_WRITE_HINT.search(text) or _QUESTION_HINT.search(text) or text.endswith("?"))
 
 
