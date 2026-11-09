@@ -4315,6 +4315,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_message = update.effective_message.text
 
+    if context.user_data.get("project_action_pending"):
+        if user_message.strip().lower() in {"отмена", "отмени", "cancel"}:
+            context.user_data.pop("project_action_pending", None)
+            await update.effective_message.reply_text("Черновик проектного действия отменён. Данные не изменены.", reply_markup=MAIN_MENU)
+        else:
+            await update.effective_message.reply_text(
+                "У тебя есть неподтверждённое действие по проекту. Подтверди или отмени его кнопками под сообщением."
+            )
+        return
+
+    if context.user_data.get("project_asset_target"):
+        if user_message.strip().lower() in {"отмена", "отмени", "cancel"}:
+            context.user_data.pop("project_asset_target", None)
+            await update.effective_message.reply_text("Ожидание файла отменено.", reply_markup=MAIN_MENU)
+        else:
+            await update.effective_message.reply_text("Жду фото или документ для проекта. Для отмены напиши /cancel.")
+        return
+
     # Ответ на уточнение финансового агента относится к исходному сообщению.
     clarification = context.user_data.pop("finance_clarification_pending", None)
     if clarification:
@@ -4351,16 +4369,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if looks_like_finance_question(user_message):
         await update.effective_message.chat.send_action("typing")
         await answer_finance_question(update, context, user_message)
-        return
-
-    if context.user_data.get("project_action_pending"):
-        if user_message.strip().lower() in {"отмена", "отмени", "cancel"}:
-            context.user_data.pop("project_action_pending", None)
-            await update.effective_message.reply_text("Черновик проектного действия отменён. Данные не изменены.", reply_markup=MAIN_MENU)
-        else:
-            await update.effective_message.reply_text(
-                "У тебя есть неподтверждённое действие по проекту. Подтверди или отмени его кнопками под сообщением."
-            )
         return
 
     if looks_like_project_intent(user_message):
@@ -4524,6 +4532,7 @@ def projects_keyboard(shown: list[dict], has_done: bool, show_all: bool) -> Inli
 def project_card_keyboard(n: int) -> InlineKeyboardMarkup:
     return ikb([
         [ib("➕ Этап", f"pj:add:stage:{n}"), ib("➕ Задача", f"pj:add:task:{n}"), ib("📝 Заметка", f"pj:add:note:{n}")],
+        [ib("📎 Добавить файл", f"pj:asset:{n}"), ib("📂 Материалы", f"pj:assets:{n}")],
         [ib("🤖 План от ИИ", f"pj:plan:{n}"), ib("☑️ Отметить", f"pj:mark:{n}")],
         [ib("✏️ Изменить", f"pj:edit:{n}"), ib("🗑 Убрать запись", f"pj:delmenu:{n}")],
         [ib("🗑 Удалить проект", f"pj:delproj:{n}"), ib("⬅️ К списку", "pj:list")],
@@ -4850,6 +4859,10 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await msg.reply_text(text, reply_markup=markup)
             elif act == "idel":
                 await p_del_command(update, ctx([parts[2]]))
+            elif act == "asset":
+                await project_asset_command(update, ctx([parts[2]]))
+            elif act == "assets":
+                await project_assets_command(update, ctx([parts[2]]))
             elif act == "delproj":
                 n = parts[2]
                 await msg.reply_text(
@@ -5253,6 +5266,9 @@ def main():
     app.add_handler(CommandHandler("asset", project_asset_command))
     app.add_handler(CommandHandler("assets", project_assets_command))
     app.add_handler(CallbackQueryHandler(project_action_callback, pattern="^pjact:"))
+    app.add_handler(CommandHandler("asset", project_asset_command))
+    app.add_handler(CommandHandler("assets", project_assets_command))
+    app.add_handler(CallbackQueryHandler(project_action_callback, pattern="^pjact:"))
     app.add_handler(CallbackQueryHandler(plan_callback, pattern="^plan:"))
     app.add_handler(CallbackQueryHandler(report_callback, pattern="^report:"))
     app.add_handler(CallbackQueryHandler(todoist_confirm_callback, pattern="^td:"))
@@ -5269,6 +5285,7 @@ def main():
     )
     app.add_handler(CallbackQueryHandler(ui_callback, pattern=r"^(fin|pay|buy|pj|mem|sched|tz|ui):"))
 
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_project_asset))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_project_asset))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
