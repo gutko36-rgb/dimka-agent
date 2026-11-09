@@ -4661,7 +4661,7 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         label = asset.get("file_name") or asset.get("caption") or f"Материал №{asset['id']}"
                         lines.append(f"{icon} №{asset['id']} — {clip(label, 70)}")
                     await msg.reply_text(
-                        "\\n".join(lines),
+                        "\n".join(lines),
                         reply_markup=project_assets_keyboard(project_id, assets),
                     )
             elif act == "asset":
