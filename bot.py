@@ -1798,7 +1798,7 @@ async def fin_add_transaction(
 async def fin_load_transactions(user_id: int, start_iso: str, end_iso: str) -> list[dict]:
     result = await db_call(
         supabase.table("finance_transactions")
-        .select("id, kind, amount, category, note, tx_date")
+        .select("id, kind, amount, category, note, tx_date, project_id")
         .eq("telegram_id", user_id)
         .gte("tx_date", start_iso)
         .lte("tx_date", end_iso)
