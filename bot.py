@@ -4359,7 +4359,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
-    if context.user_data.get("project_asset_target"):
+    asset_target = context.user_data.get("project_asset_target")
+    if asset_target:
+        expired = False
+        if isinstance(asset_target, dict):
+            expires_at = datetime.fromisoformat(asset_target["expires_at"])
+            expired = datetime.now(dt_timezone.utc) > expires_at
+        if expired:
+            context.user_data.pop("project_asset_target", None)
+            await update.effective_message.reply_text("Время ожидания файла истекло. Если нужно, снова нажми «Добавить файл».")
+            return
         if user_message.strip().lower() in {"отмена", "отмени", "cancel"}:
             context.user_data.pop("project_asset_target", None)
             await update.effective_message.reply_text("Ожидание файла отменено.", reply_markup=MAIN_MENU)
