@@ -3656,7 +3656,7 @@ async def answer_finance_question(
             raise ValueError("Некорректный формат фильтров")
         if payload.get("clarification"):
             await update.effective_message.reply_text(
-                str(payload["clarification"])[:400] + "\\nНикакие данные не изменены.",
+                str(payload["clarification"])[:400] + "\nНикакие данные не изменены.",
                 reply_markup=MAIN_MENU,
             )
             return
@@ -3679,7 +3679,7 @@ async def answer_finance_question(
         project_id = None
         project_title = payload.get("project_title")
         if project_title:
-            normalize = lambda value: " ".join(re.sub(r"[^\\w]+", " ", str(value).casefold()).split())
+            normalize = lambda value: " ".join(re.sub(r"[^\w]+", " ", str(value).casefold()).split())
             wanted = normalize(project_title)
             matches = [p for p in project_lines if normalize(p["title"]) == wanted]
             if len(matches) != 1:
@@ -3763,7 +3763,7 @@ async def answer_finance_question(
                     lines.append(f"- {label}: {money(total)}")
             lines += ["", f"Операций найдено: {len(rows)}."]
         lines += ["", "Это сумма записей в базе, а не фактический остаток банковского счёта."]
-        await update.effective_message.reply_text("\\n".join(lines), reply_markup=MAIN_MENU)
+        await update.effective_message.reply_text("\n".join(lines), reply_markup=MAIN_MENU)
     except Exception:
         logging.exception("Не удалось обработать финансовый запрос")
         await update.effective_message.reply_text(
