@@ -29,7 +29,7 @@ def looks_like_finance_entry(message: str) -> bool:
     text = (message or "").strip()
     if not text or _NEGATED_ACTION.search(text):
         return False
-    if text.endswith("?") and re.search(r"\b(?:сколько|почему|что|какие|покажи|куда|на что)\b", text, re.IGNORECASE):
+    if re.search(r"\b(?:сколько|почему|что|какие|покажи|куда|на что)\b", text, re.IGNORECASE):
         return False
     if re.search(r"\b(?:если бы|хотел бы|мог бы|планирую|собираюсь)\b", text, re.IGNORECASE):
         return False
