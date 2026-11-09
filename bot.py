@@ -4782,7 +4782,7 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 BACKUP_TABLES = [
     "profiles", "conversations", "memories", "daily_surveys", "analytics_reports",
     "daily_logs", "ai_insights", "finance_transactions", "finance_payments",
-    "finance_purchases", "agent_projects", "agent_project_items",
+    "finance_purchases", "agent_projects", "agent_project_items", "agent_project_assets",
 ]
 BACKUP_PAGE = 1000
 BACKUP_MAX_ROWS = 200_000
