@@ -10,11 +10,12 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 
 FINANCE_CUES = re.compile(
-    r"(?iu)\\b(?:потратил[а-яё]*|купил[а-яё]*|оплатил[а-яё]*|заплатил[а-яё]*|"
+    r"(?iu)\b(?:потратил[а-яё]*|купил[а-яё]*|оплатил[а-яё]*|заплатил[а-яё]*|"
     r"расход[а-яё]*|доход[а-яё]*|получил[а-яё]*|заработал[а-яё]*|"
-    r"перев[её]л[а-яё]*|пришл[а-яё]*|списал[а-яё]*|поступил[а-яё]*)\\b"
-    r"|(?:[$€₽]|\\b(?:руб(?:лей|ля|ль)?|доллар(?:ов|а)?|евро)\\b)"
+    r"перев[её]л[а-яё]*|пришл[а-яё]*|списал[а-яё]*|поступил[а-яё]*)\b"
+    r"|(?:[$€₽]|\b(?:руб(?:лей|ля|ль)?|доллар(?:ов|а)?|евро)\b)"
 )
+
 
 def looks_like_finance(text: str) -> bool:
     """Return True only when a message contains a transaction cue."""
@@ -61,9 +62,8 @@ def validate_finance_operations(
             return [], f"Не распознал сумму операции №{index + 1}. Уточни сумму."
         if not amount.is_finite() or amount <= 0 or amount >= Decimal("1000000000"):
             return [], f"Проверь сумму операции №{index + 1}."
-        confidence = item.get("confidence", 1)
         try:
-            confidence = float(confidence)
+            confidence = float(item.get("confidence", 1))
         except (TypeError, ValueError):
             confidence = 0
         if confidence < 0.75:
@@ -114,4 +114,4 @@ def format_finance_operations(operations: list[dict]) -> str:
         if op.get("project_title"):
             details.append(f'проект: {op["project_title"]}')
         lines.append(f'{i}. {sign}{amount} — ' + " · ".join(details))
-    return "\\n".join(lines)
+    return "\n".join(lines)
