@@ -3977,6 +3977,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.effective_message.chat.send_action("typing")
 
+    # Аналитические запросы по проектам отвечаем только по фактическим записям Supabase.
+    try:
+        project_expenses = await answer_project_expense_query(user_id, user_message)
+        if project_expenses is not None:
+            await save_message(user_id, "user", user_message)
+            await save_message(user_id, "assistant", project_expenses)
+            await update.effective_message.reply_text(
+                project_expenses, reply_markup=MAIN_MENU
+            )
+            return
+    except Exception:
+        logging.exception("Не удалось посчитать расходы по проекту")
+        await update.effective_message.reply_text(
+            "Не получилось получить расходы по проекту из Supabase. "
+            "Данные не изменялись.",
+            reply_markup=MAIN_MENU,
+        )
+        return
+
     # Свободный финансовый ввод: сначала извлекаем и проверяем черновик.
     # Ни одна операция не попадёт в базу до явного нажатия «Да, записать».
     if looks_like_finance(user_message):
