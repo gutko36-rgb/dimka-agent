@@ -69,6 +69,10 @@ def validate_finance_operations(
         if confidence < 0.75:
             return [], f"Не уверен в деталях операции №{index + 1}. Уточни её, пожалуйста."
 
+        currency = str(item.get("currency") or "RUB").strip().upper()
+        if currency not in ("RUB", "RUR", "₽", "РУБ", "РУБЛЬ", "РУБЛЕЙ"):
+            return [], "В финансовом учёте сейчас используется рубль. Уточни сумму в рублях; валютную операцию пока не записывал."
+
         raw_date = item.get("date")
         try:
             tx_date = date.fromisoformat(raw_date) if raw_date else today
