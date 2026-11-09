@@ -3387,7 +3387,7 @@ async def project_assets_command(update: Update, context: ContextTypes.DEFAULT_T
         .select("id, telegram_file_id, media_type, file_name, caption, created_at")
         .eq("telegram_id", user_id)
         .eq("project_id", project_id)
-        .order("id")
+        .order("id", desc=True)
         .limit(20)
         .execute
     )
