@@ -3769,6 +3769,15 @@ async def extract_finance_draft(user_id: int, message: str) -> tuple[list[dict] 
         )
     }
     grounded_project_ids = explicit_ids | {int(p["id"]) for p in mentioned_projects}
+    if grounded_project_ids and not any(
+        op.get("project_id") is not None
+        and int(op["project_id"]) in grounded_project_ids
+        for op in operations
+    ):
+        return [], (
+            "Ты упомянул проект, но я не смог надёжно привязать к нему расход. "
+            "Укажи название или номер проекта ещё раз. Ничего не записывал."
+        )
     for op in operations:
         if op.get("project_id") is not None and int(op["project_id"]) not in grounded_project_ids:
             return [], (
