@@ -46,6 +46,17 @@ class FinanceIntentTests(unittest.TestCase):
         self.assertEqual(len(ops), 2)
         self.assertEqual(ops[1]["project_id"], 7)
 
+    def test_reject_foreign_currency(self):
+        ops, error = validate_finance_operations(
+            {"is_finance": True, "operations": [
+                {"kind": "expense", "amount": 10, "currency": "USD", "confidence": 0.99}
+            ]},
+            [],
+            date(2026, 11, 10),
+        )
+        self.assertEqual(ops, [])
+        self.assertIn("руб", error.lower())
+
     def test_reject_unknown_project(self):
         ops, error = validate_finance_operations(
             {"is_finance": True, "operations": [
