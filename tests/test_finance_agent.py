@@ -26,6 +26,9 @@ class FinanceIntentTests(unittest.TestCase):
     def test_ignores_finance_question(self):
         self.assertFalse(looks_like_finance_entry("Сколько я потратил на машину в этом месяце?"))
 
+    def test_ignores_question_even_with_amount_and_no_question_mark(self):
+        self.assertFalse(looks_like_finance_entry("Сколько потратил 500 рублей на бензин"))
+
     def test_detects_read_only_finance_question(self):
         self.assertTrue(looks_like_finance_question("Сколько я потратил на машину в этом месяце?"))
 
