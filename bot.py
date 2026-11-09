@@ -4575,6 +4575,7 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if area == "ui":
             if act == "cancel":
+                context.user_data.pop("project_media_pending", None)
                 await query.edit_message_text("Отменено.")
             elif act == "tasks":
                 await tasks_command(update, ctx([]))
@@ -4627,6 +4628,61 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif act == "add":
                 kind, n = parts[2], parts[3]
                 await ask_input(update, context, kind, [n], PROMPTS[kind])
+            elif act == "media":
+                project_id = int(parts[2])
+                project = await pj_get(user_id, project_id)
+                if not project:
+                    await msg.reply_text("Проект не найден.")
+                else:
+                    context.user_data["project_media_pending"] = project_id
+                    await msg.reply_text(
+                        f"Отправь фото или документ для проекта «{project['title']}». "
+                        "Можно отправить несколько файлов подряд, затем нажми «Готово».",
+                        reply_markup=ikb([[ib("Готово", "pj:media_done")], [ib("Отмена", "ui:cancel")]]),
+                    )
+            elif act == "media_done":
+                project_id = context.user_data.pop("project_media_pending", None)
+                await msg.reply_text(
+                    "Добавление материалов завершено." if project_id else "Режим добавления материалов уже закрыт.",
+                    reply_markup=MAIN_MENU,
+                )
+            elif act == "assets":
+                project_id = int(parts[2])
+                assets = await pj_assets(user_id, project_id)
+                if not assets:
+                    await msg.reply_text(
+                        "В этом проекте пока нет прикреплённых материалов.",
+                        reply_markup=project_assets_keyboard(project_id, []),
+                    )
+                else:
+                    lines = ["Материалы проекта:", ""]
+                    for asset in assets:
+                        icon = "🖼" if asset["media_type"] == "photo" else "📄"
+                        label = asset.get("file_name") or asset.get("caption") or f"Материал №{asset['id']}"
+                        lines.append(f"{icon} №{asset['id']} — {clip(label, 70)}")
+                    await msg.reply_text(
+                        "\\n".join(lines),
+                        reply_markup=project_assets_keyboard(project_id, assets),
+                    )
+            elif act == "asset":
+                project_id, asset_id = int(parts[2]), int(parts[3])
+                asset = await pj_asset_get(user_id, project_id, asset_id)
+                if not asset:
+                    await msg.reply_text("Материал не найден в этом проекте.")
+                else:
+                    caption = clip(asset.get("caption") or asset.get("file_name") or "", 1000) or None
+                    if asset["media_type"] == "photo":
+                        await context.bot.send_photo(
+                            chat_id=update.effective_chat.id,
+                            photo=asset["telegram_file_id"],
+                            caption=caption,
+                        )
+                    else:
+                        await context.bot.send_document(
+                            chat_id=update.effective_chat.id,
+                            document=asset["telegram_file_id"],
+                            caption=caption,
+                        )
             elif act == "plan":
                 await project_plan_command(update, ctx([parts[2]]))
             elif act == "mark":
