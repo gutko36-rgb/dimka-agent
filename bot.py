@@ -3638,7 +3638,7 @@ async def answer_project_expense_query(user_id: int, message: str) -> str | None
     project = matches[0]
     today = await user_today(user_id)
     lowered = message.casefold()
-    if "за всё время" in lowered or "за все время" in lowered or "всего" in lowered:
+    if "за всё время" in lowered or "за все время" in lowered or "за весь период" in lowered or "с начала проекта" in lowered:
         start, end, period_title = dt_date(2000, 1, 1), today, "за всё время"
     elif "прошлом месяце" in lowered or "за прошлый месяц" in lowered:
         first_this_month = today.replace(day=1)
@@ -3651,6 +3651,11 @@ async def answer_project_expense_query(user_id: int, message: str) -> str | None
     elif "сегодня" in lowered:
         start = end = today
         period_title = "за сегодня"
+    elif "прошлой неделе" in lowered or "за прошлую неделю" in lowered:
+        this_week_start, _ = finance_period("week", today)
+        end = this_week_start - timedelta(days=1)
+        start = end - timedelta(days=6)
+        period_title = "за прошлую неделю"
     elif "недел" in lowered:
         start, end = finance_period("week", today)
         period_title = "за эту неделю"
