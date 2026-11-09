@@ -22,6 +22,16 @@ def looks_like_finance(text: str) -> bool:
     return bool(text and FINANCE_CUES.search(text))
 
 
+FOREIGN_CURRENCY_CUES = re.compile(
+    r"(?iu)(?:\\b(?:USD|EUR|KZT|UAH|GBP|доллар[а-яё]*|евро|тенге|гривн[а-яё]*|фунт[а-яё]*)\\b|[$€₸£])"
+)
+
+
+def has_foreign_currency(text: str) -> bool:
+    """Detect currencies not supported by the current RUB-only ledger."""
+    return bool(text and FOREIGN_CURRENCY_CUES.search(text))
+
+
 def validate_finance_operations(
     raw: Any,
     projects: list[dict],
