@@ -16,22 +16,22 @@ PROJECT_FIELDS = {"description", "goal", "status", "deadline", "result"}
 PROJECT_STATUSES = {"idea", "active", "paused", "done"}
 
 _WRITE_HINT = re.compile(
-    r"\\b(?:создай|создать|добавь|добавить|запиши|записать|зафиксируй|"
+    r"\b(?:создай|создать|добавь|добавить|запиши|записать|зафиксируй|"
     r"сохрани|сохранить|поставь|поставить|обнови|измени|изменить|"
-    r"перенеси|перенести|отметь|отметить)\\b",
+    r"перенеси|перенести|отметь|отметить)\b",
     re.IGNORECASE,
 )
 _READ_HINT = re.compile(
-    r"\\b(?:проект(?:ы|а|е|у|ом)?|этап(?:ы|а|е|у|ов)?|задач(?:а|и|у|ей)?|"
-    r"заметк(?:а|и|у|е)|материал(?:ы|ов)?|ход работ|прогресс)\\b",
+    r"\b(?:проект(?:ы|а|е|у|ом)?|этап(?:ы|а|е|у|ов)?|задач(?:а|и|у|ей)?|"
+    r"заметк(?:а|и|у|е)|материал(?:ы|ов)?|ход работ|прогресс)\b",
     re.IGNORECASE,
 )
 _QUESTION_HINT = re.compile(
-    r"\\b(?:как|что|какие|сколько|покажи|расскажи|статус|сроки|"
-    r"прогресс|готово|осталось)\\b",
+    r"\b(?:как|что|какие|сколько|покажи|расскажи|статус|сроки|"
+    r"прогресс|готово|осталось)\b",
     re.IGNORECASE,
 )
-_NEGATION = re.compile(r"\\b(?:не надо|не добавляй|не создавай|не записывай|не сохраняй)\\b", re.IGNORECASE)
+_NEGATION = re.compile(r"\b(?:не надо|не добавляй|не создавай|не записывай|не сохраняй)\b", re.IGNORECASE)
 
 
 def looks_like_project_intent(message: str) -> bool:
@@ -45,7 +45,7 @@ def looks_like_project_intent(message: str) -> bool:
 
 
 def _norm(value: str) -> str:
-    return " ".join(re.sub(r"[^\\w]+", " ", value.casefold(), flags=re.UNICODE).split())
+    return " ".join(re.sub(r"[^\w]+", " ", value.casefold(), flags=re.UNICODE).split())
 
 
 def parse_project_response(
