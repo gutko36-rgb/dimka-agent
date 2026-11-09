@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from groq import AsyncGroq
 from finance_agent import looks_like_finance_entry, looks_like_finance_question, parse_finance_response
 from project_agent import looks_like_project_intent, parse_project_response
+from project_documents import build_project_timeline, extract_document_text, search_document_text
 from supabase import create_client, Client
 
 from telegram import (
@@ -258,6 +259,7 @@ HELP_TEXT = (
     "/project_plan 3 — ИИ предложит этапы, ты решишь, сохранять ли\n"
     "/project_del 3 да — удалить проект\n"
     "/asset 3 — прикрепить следующее фото или документ; /assets 3 — открыть материалы\n"
+    "/project_history 3 — лента событий; /project_search 3 текст — поиск по проекту и документам\n"
     "Можно обычным текстом попросить добавить этап, задачу или заметку, создать проект или показать прогресс. Запись — только после подтверждения.\n"
     "/deadlines — ближайшие сроки проектов и платежей\n"
     "/backup — резервная копия всех данных файлом (по воскресеньям приходит сама)\n\n"
@@ -2754,6 +2756,141 @@ async def project_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+
+
+async def project_history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.effective_message.reply_text("Формат: /project_history номер_проекта")
+        return
+    user_id = update.effective_user.id
+    project_id = int(context.args[0])
+    try:
+        project = await pj_get(user_id, project_id)
+        if not project:
+            await update.effective_message.reply_text("Проект не найден. Проверь /projects.")
+            return
+        items = await pj_items(user_id, project_id)
+        assets_result = await db_call(
+            supabase.table("agent_project_assets")
+            .select("file_name, media_type, created_at")
+            .eq("telegram_id", user_id)
+            .eq("project_id", project_id)
+            .order("created_at", desc=True)
+            .limit(100)
+            .execute
+        )
+        timeline = build_project_timeline(project, items, assets_result.data or [])
+    except Exception:
+        logging.exception("Не удалось загрузить историю проекта")
+        await update.effective_message.reply_text("Не удалось загрузить историю проекта. Попробуй позже.")
+        return
+    if not timeline:
+        await update.effective_message.reply_text("В истории проекта пока нет событий.")
+        return
+    lines = [f"🕘 История проекта «{project['title']}» (последние {min(30, len(timeline))} событий):"]
+    for event in timeline[:30]:
+        stamp = event["timestamp"].replace("T", " ")[:16]
+        lines.append(f"\n{stamp} · {event['label']}\n{clip(event['description'], 220)}")
+    lines.append("\n\nПримечание: это лента создания записей и материалов плюс дата последнего изменения карточки. Полная история прежних значений полей пока не ведётся.")
+    await reply_long(update.effective_message, "\n".join(lines), inline=project_card_keyboard(project_id))
+
+
+async def project_search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+    args = context.args or []
+    if len(args) < 2 or not args[0].isdigit():
+        await update.effective_message.reply_text("Формат: /project_search номер_проекта поисковая_фраза")
+        return
+    user_id = update.effective_user.id
+    project_id = int(args[0])
+    query = " ".join(args[1:]).strip()[:120]
+    if len(query) < 2:
+        await update.effective_message.reply_text("Поисковая фраза слишком короткая.")
+        return
+    await update.effective_message.chat.send_action("typing")
+    try:
+        project = await pj_get(user_id, project_id)
+        if not project:
+            await update.effective_message.reply_text("Проект не найден. Проверь /projects.")
+            return
+        items = await pj_items(user_id, project_id)
+        assets_result = await db_call(
+            supabase.table("agent_project_assets")
+            .select("id, telegram_file_id, media_type, file_name, mime_type, caption, created_at")
+            .eq("telegram_id", user_id)
+            .eq("project_id", project_id)
+            .order("created_at", desc=True)
+            .limit(20)
+            .execute
+        )
+        assets = assets_result.data or []
+    except Exception:
+        logging.exception("Не удалось подготовить поиск по проекту")
+        await update.effective_message.reply_text("Не удалось загрузить данные проекта.")
+        return
+
+    results = []
+    card_text = " ".join(str(project.get(key) or "") for key in ("title", "description", "goal", "result"))
+    for snippet in search_document_text(card_text, query):
+        results.append(("Карточка проекта", snippet))
+    for item in items:
+        for snippet in search_document_text(str(item.get("content") or ""), query):
+            results.append((f"{item.get('kind', 'Запись')} №{item['id']}", snippet))
+    for asset in assets:
+        for snippet in search_document_text(str(asset.get("caption") or ""), query):
+            results.append((f"Подпись к материалу №{asset['id']}", snippet))
+
+    checked_files = 0
+    downloaded_bytes = 0
+    skipped = []
+    for asset in assets:
+        if asset.get("media_type") != "document" or checked_files >= 5:
+            continue
+        file_name = asset.get("file_name") or ""
+        suffix = os.path.splitext(file_name.lower())[1]
+        if suffix not in {".pdf", ".docx", ".txt", ".md", ".csv", ".log"}:
+            continue
+        checked_files += 1
+        try:
+            telegram_file = await context.bot.get_file(asset["telegram_file_id"])
+            reported_size = getattr(telegram_file, "file_size", None)
+            if reported_size and reported_size > 10 * 1024 * 1024:
+                skipped.append(f"{file_name}: больше 10 МБ")
+                continue
+            buffer = io.BytesIO()
+            await telegram_file.download_to_memory(out=buffer)
+            content = buffer.getvalue()
+            downloaded_bytes += len(content)
+            if downloaded_bytes > 25 * 1024 * 1024:
+                skipped.append("Достигнут общий лимит загрузки 25 МБ")
+                break
+            extracted = extract_document_text(file_name, asset.get("mime_type"), content)
+            if extracted["status"] == "no_text":
+                skipped.append(f"{file_name}: текст не найден (возможно, скан)")
+                continue
+            for snippet in search_document_text(extracted["text"], query):
+                results.append((f"Файл {file_name}", snippet))
+        except Exception as error:
+            logging.warning("Поиск по вложению %s не выполнен: %s", asset.get("id"), error)
+            skipped.append(f"{file_name}: не удалось прочитать")
+
+    if not results:
+        message = f"🔎 По запросу «{query}» в проекте «{project['title']}» совпадений не найдено."
+    else:
+        lines = [f"🔎 Найдено совпадений: {len(results)} в проекте «{project['title']}»"]
+        for label, snippet in results[:12]:
+            lines.append(f"\n• {label}\n{clip(snippet, 450)}")
+        message = "\n".join(lines)
+    if skipped:
+        message += "\n\nНе удалось проверить: " + "; ".join(skipped[:5])
+    message += "\n\nПоиск проверяет карточку, записи, подписи и последние 20 материалов; за один запрос скачивает не более 5 документов и 25 МБ. Сканированные PDF без текстового слоя пока не распознаются."
+    await reply_long(update.effective_message, message)
+
 async def project_set_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)
@@ -3384,7 +3521,7 @@ async def project_assets_command(update: Update, context: ContextTypes.DEFAULT_T
         return
     result = await db_call(
         supabase.table("agent_project_assets")
-        .select("id, telegram_file_id, media_type, file_name, caption, created_at")
+        .select("id, telegram_file_id, telegram_file_unique_id, media_type, file_name, mime_type, caption, created_at")
         .eq("telegram_id", user_id)
         .eq("project_id", project_id)
         .order("id", desc=True)
@@ -4576,6 +4713,7 @@ def project_card_keyboard(n: int) -> InlineKeyboardMarkup:
     return ikb([
         [ib("➕ Этап", f"pj:add:stage:{n}"), ib("➕ Задача", f"pj:add:task:{n}"), ib("📝 Заметка", f"pj:add:note:{n}")],
         [ib("📎 Добавить файл", f"pj:asset:{n}"), ib("📂 Материалы", f"pj:assets:{n}")],
+        [ib("🕘 История", f"pj:history:{n}")],
         [ib("🤖 План от ИИ", f"pj:plan:{n}"), ib("☑️ Отметить", f"pj:mark:{n}")],
         [ib("✏️ Изменить", f"pj:edit:{n}"), ib("🗑 Убрать запись", f"pj:delmenu:{n}")],
         [ib("🗑 Удалить проект", f"pj:delproj:{n}"), ib("⬅️ К списку", "pj:list")],
@@ -4908,6 +5046,8 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await project_asset_command(update, ctx([parts[2]]))
             elif act == "assets":
                 await project_assets_command(update, ctx([parts[2]]))
+            elif act == "history":
+                await project_history_command(update, ctx([parts[2]]))
             elif act == "delproj":
                 n = parts[2]
                 await msg.reply_text(
@@ -5310,6 +5450,8 @@ def main():
     app.add_handler(CommandHandler("project_del", project_del_command))
     app.add_handler(CommandHandler("asset", project_asset_command))
     app.add_handler(CommandHandler("assets", project_assets_command))
+    app.add_handler(CommandHandler("project_history", project_history_command))
+    app.add_handler(CommandHandler("project_search", project_search_command))
     app.add_handler(CallbackQueryHandler(project_action_callback, pattern="^pjact:"))
     app.add_handler(CallbackQueryHandler(plan_callback, pattern="^plan:"))
     app.add_handler(CallbackQueryHandler(report_callback, pattern="^report:"))
