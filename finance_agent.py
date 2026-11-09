@@ -18,6 +18,10 @@ _FINANCE_ACTION = re.compile(
     re.IGNORECASE,
 )
 _AMOUNT_HINT = re.compile(r"(?:\d|тысяч|тыс\.?|руб(?:лей|ля|ль)?|₽)", re.IGNORECASE)
+_NEGATED_ACTION = re.compile(
+    r"\bне\s+(?:потратил[а]?|израсходовал[а]?|купил[а]?|оплатил[а]?|заплатил[а]?|получил[а]?|заработал[а]?)\b",
+    re.IGNORECASE,
+)
 
 
 def looks_like_finance_entry(message: str) -> bool:
@@ -25,7 +29,7 @@ def looks_like_finance_entry(message: str) -> bool:
     text = (message or "").strip()
     if not text or _NEGATED_ACTION.search(text):
         return False
-    if re.search(r"\\b(?:если бы|хотел бы|мог бы|планирую|собираюсь)\\b", text, re.IGNORECASE):
+    if re.search(r"\b(?:если бы|хотел бы|мог бы|планирую|собираюсь)\b", text, re.IGNORECASE):
         return False
     return bool(_FINANCE_ACTION.search(text) and _AMOUNT_HINT.search(text))
 
