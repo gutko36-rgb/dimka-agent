@@ -33,6 +33,30 @@ def has_foreign_currency(text: str) -> bool:
     return bool(text and FOREIGN_CURRENCY_CUES.search(text))
 
 
+def is_project_expense_query(text: str) -> bool:
+    """Detect factual questions about spending totals rather than new transactions."""
+    if not text:
+        return False
+    has_total = re.search(r"(?iu)\b(?:сколько|сумм[аыу]|итог)\b", text)
+    has_spend = re.search(r"(?iu)\b(?:потратил[а-яё]*|расход[а-яё]*|затрат[а-яё]*|уш[её]л[ао]?)\b", text)
+    return bool(has_total and has_spend)
+
+
+def find_mentioned_projects(text: str, projects: list[dict]) -> list[dict]:
+    """Find project titles explicitly present in a message; longest names win."""
+    if not text:
+        return []
+    matches = [
+        p for p in projects
+        if p.get("title") and re.search(re.escape(str(p["title"])), text, re.IGNORECASE)
+    ]
+    if not matches:
+        return []
+    matches.sort(key=lambda p: len(str(p["title"])), reverse=True)
+    longest = len(str(matches[0]["title"]))
+    return [p for p in matches if len(str(p["title"])) == longest]
+
+
 def validate_finance_operations(
     raw: Any,
     projects: list[dict],
