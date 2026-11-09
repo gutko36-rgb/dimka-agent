@@ -1732,21 +1732,65 @@ def upcoming_payments(payments: list[dict], today: dt_date) -> list[dict]:
 # ---------- база ----------
 
 async def fin_add_transaction(
-    user_id: int, kind: str, amount: float, category: str, note: str | None, tx_date: dt_date
-) -> None:
+    user_id: int,
+    kind: str,
+    amount: float,
+    category: str,
+    note: str | None,
+    tx_date: dt_date,
+    project_id: int | None = None,
+    source_update_id: int | None = None,
+    source_item_index: int = 0,
+) -> bool:
+    """Сохраняет операцию. Возвращает False, если Telegram update уже обработан."""
     await ensure_profile(user_id)
-    await db_call(
-        supabase.table("finance_transactions")
-        .insert({
-            "telegram_id": user_id,
-            "kind": kind,
-            "amount": amount,
-            "category": category,
-            "note": note,
-            "tx_date": tx_date.isoformat(),
-        })
-        .execute
-    )
+
+    payload = {
+        "telegram_id": user_id,
+        "kind": kind,
+        "amount": amount,
+        "category": category,
+        "note": note,
+        "tx_date": tx_date.isoformat(),
+        "project_id": project_id,
+        "source_update_id": source_update_id,
+        "source_item_index": source_item_index,
+    }
+
+    if source_update_id is not None:
+        existing = await db_call(
+            supabase.table("finance_transactions")
+            .select("id")
+            .eq("telegram_id", user_id)
+            .eq("source_update_id", source_update_id)
+            .eq("source_item_index", source_item_index)
+            .limit(1)
+            .execute
+        )
+        if existing.data:
+            return False
+
+    try:
+        result = await db_call(
+            supabase.table("finance_transactions").insert(payload).execute
+        )
+    except Exception:
+        # Уникальный индекс закрывает гонку между параллельными повторами update.
+        if source_update_id is not None:
+            existing = await db_call(
+                supabase.table("finance_transactions")
+                .select("id")
+                .eq("telegram_id", user_id)
+                .eq("source_update_id", source_update_id)
+                .eq("source_item_index", source_item_index)
+                .limit(1)
+                .execute
+            )
+            if existing.data:
+                return False
+        raise
+
+    return bool(result.data)
 
 
 async def fin_load_transactions(user_id: int, start_iso: str, end_iso: str) -> list[dict]:
