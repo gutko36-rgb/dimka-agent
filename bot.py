@@ -3755,10 +3755,26 @@ async def extract_finance_draft(user_id: int, message: str) -> tuple[list[dict] 
     if not isinstance(raw, dict) or raw.get("is_finance") is not True:
         return None, None
 
-    from finance_agent import validate_finance_operations
+    from finance_agent import validate_finance_operations, find_mentioned_projects
     operations, clarification = validate_finance_operations(raw, projects, today)
     if clarification:
         return [], clarification
+
+    # Не позволяем модели самостоятельно назначать проект, которого пользователь не упоминал.
+    mentioned_projects = find_mentioned_projects(message, projects)
+    explicit_ids = {
+        int(value) for value in re.findall(
+            r"(?iu)\\bпроект(?:а|е|у|ом)?\\s*(?:№|#)?\\s*(\\d+)\\b",
+            message,
+        )
+    }
+    grounded_project_ids = explicit_ids | {int(p["id"]) for p in mentioned_projects}
+    for op in operations:
+        if op.get("project_id") is not None and int(op["project_id"]) not in grounded_project_ids:
+            return [], (
+                "Я не смог надёжно определить проект из твоего сообщения. "
+                "Укажи его название или номер, например «проект №3». Ничего не записывал."
+            )
 
     by_id = {int(p["id"]): p for p in projects}
     for op in operations:
