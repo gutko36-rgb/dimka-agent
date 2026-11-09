@@ -146,6 +146,13 @@ def parse_project_response(
         if field not in PROJECT_FIELDS:
             raise ValueError("Недопустимое поле проекта")
         value = str(payload.get("value") or "").strip()
+        clear_field = payload.get("clear") is True
+        if clear_field and field not in {"description", "goal", "deadline", "result"}:
+            raise ValueError("Это поле нельзя очистить")
+        if not clear_field and not value:
+            return {"action": None, "clarification": "Уточни новое значение поля. Если нужно очистить его, скажи об этом явно."}
+        if clear_field:
+            value = ""
         if field == "status":
             aliases = {
                 "идея": "idea", "в работе": "active", "активный": "active",
@@ -156,9 +163,7 @@ def parse_project_response(
             if value not in PROJECT_STATUSES:
                 return {"action": None, "clarification": "Статус проекта: идея, в работе, пауза или завершён."}
         elif field == "deadline":
-            if value.casefold() in {"нет", "убрать", "очистить", "-"}:
-                value = ""
-            elif value:
+            if value:
                 try:
                     value = date.fromisoformat(value).isoformat()
                 except ValueError as exc:
@@ -166,6 +171,6 @@ def parse_project_response(
         elif field in {"description", "goal", "result"}:
             value = value[:1000]
         result["field"] = field
-        result["value"] = value or None
+        result["value"] = None if clear_field else value
 
     return result
