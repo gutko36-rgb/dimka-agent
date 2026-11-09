@@ -3273,6 +3273,9 @@ async def project_action_callback(update: Update, context: ContextTypes.DEFAULT_
         return
     action = (query.data or "").split(":", 1)[-1]
     draft = context.user_data.get("project_action_pending")
+    if draft and draft.get("_processing"):
+        await query.answer("Действие уже обрабатывается.", show_alert=True)
+        return
     if action == "cancel":
         context.user_data.pop("project_action_pending", None)
         await query.answer("Отменено")
@@ -3283,6 +3286,7 @@ async def project_action_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.answer("Черновик устарел. Отправь запрос ещё раз.", show_alert=True)
         return
 
+    draft["_processing"] = True
     user_id = update.effective_user.id
     try:
         kind = draft["action"]
@@ -3321,6 +3325,7 @@ async def project_action_callback(update: Update, context: ContextTypes.DEFAULT_
         else:
             raise ValueError("Неизвестное действие")
     except Exception as error:
+        draft.pop("_processing", None)
         logging.exception("Не удалось сохранить проектное действие")
         await query.answer("Не удалось сохранить. Черновик оставлен.", show_alert=True)
         await query.message.reply_text(
