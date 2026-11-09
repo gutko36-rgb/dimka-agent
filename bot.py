@@ -3753,6 +3753,33 @@ async def finance_confirm_callback(update: Update, context: ContextTypes.DEFAULT
         if pending["status"] == "confirmed":
             await query.edit_message_text("Эти операции уже были записаны ранее.")
             return
+        if pending["status"] == "pending":
+            expires_at = datetime.fromisoformat(pending["expires_at"].replace("Z", "+00:00"))
+            if expires_at <= datetime.now(dt_timezone.utc):
+                await db_call(
+                    supabase.table("finance_pending_actions")
+                    .update({"status": "expired"})
+                    .eq("id", pending_id)
+                    .eq("telegram_id", user_id)
+                    .eq("status", "pending")
+                    .execute
+                )
+                await query.edit_message_text("Время подтверждения истекло. Ничего не записано; отправь операцию ещё раз.")
+                return
+        if pending["status"] == "processing":
+            created_at = datetime.fromisoformat(pending["created_at"].replace("Z", "+00:00"))
+            if created_at <= datetime.now(dt_timezone.utc) - timedelta(minutes=5):
+                recovered = await db_call(
+                    supabase.table("finance_pending_actions")
+                    .update({"status": "pending"})
+                    .eq("id", pending_id)
+                    .eq("telegram_id", user_id)
+                    .eq("status", "processing")
+                    .select("*")
+                    .execute
+                )
+                if recovered.data:
+                    pending = recovered.data[0]
         if pending["status"] != "pending":
             await query.edit_message_text("Этот черновик уже отменён или обрабатывается. Новых записей не создано.")
             return
