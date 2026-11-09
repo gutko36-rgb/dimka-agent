@@ -1995,13 +1995,40 @@ async def fin_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ki
         )
         return
 
-    category = args[1].lower()[:40] if len(args) > 1 else "без категории"
-    note = clip(" ".join(args[2:]), 200) or None
     user_id = update.effective_user.id
+    details = args[1:]
+    project_tokens = [part for part in details if part.lower().startswith("project=")]
+    details = [part for part in details if not part.lower().startswith("project=")]
+    category = details[0].lower()[:40] if details else "без категории"
+    note = clip(" ".join(details[1:]), 200) or None
+    project_id = None
+
+    if project_tokens:
+        raw_project_id = project_tokens[-1].split("=", 1)[1]
+        if not raw_project_id.isdigit():
+            await update.effective_message.reply_text(
+                "Формат проекта: project=ID. Номер можно посмотреть в /projects."
+            )
+            return
+        project_id = int(raw_project_id)
+        project = await pj_get(user_id, project_id)
+        if not project:
+            await update.effective_message.reply_text(
+                "Не нашёл этот проект среди твоих проектов. Проверь /projects."
+            )
+            return
 
     try:
         today = await user_today(user_id)
-        await fin_add_transaction(user_id, kind, amount, category, note, today)
+        inserted = await fin_add_transaction(
+            user_id, kind, amount, category, note, today,
+            project_id=project_id, source_update_id=update.update_id,
+        )
+        if not inserted:
+            await update.effective_message.reply_text(
+                "Это сообщение уже было обработано: повторную запись не создавал."
+            )
+            return
         start, end = finance_period("month", today)
         rows = await fin_load_transactions(user_id, start.isoformat(), end.isoformat())
         income, expense = sum_by_kind(rows)
@@ -2010,9 +2037,10 @@ async def fin_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ki
         await update.effective_message.reply_text(FIN_SQL_HINT, reply_markup=MAIN_MENU)
         return
 
+    project_suffix = f"\nПроект: {project['title']}" if project_id else ""
     word = "Расход записан" if kind == "expense" else "Доход записан"
     await update.effective_message.reply_text(
-        f"✅ {word}: {money(amount)} ({category}).\n"
+        f"✅ {word}: {money(amount)} ({category}).{project_suffix}\n"
         f"За месяц: доходы {money(income)}, расходы {money(expense)}.",
         reply_markup=FIN_AFTER_KB,
     )
@@ -2306,9 +2334,15 @@ async def buy_done_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         today = await user_today(user_id)
-        await fin_add_transaction(
-            user_id, "expense", float(purchase["price"]), "покупка", purchase["title"], today
+        inserted = await fin_add_transaction(
+            user_id, "expense", float(purchase["price"]), "покупка", purchase["title"], today,
+            source_update_id=update.update_id,
         )
+        if not inserted:
+            await update.effective_message.reply_text(
+                "Это действие уже было обработано ранее.", reply_markup=MAIN_MENU
+            )
+            return
         await db_call(
             supabase.table("finance_purchases")
             .update({"status": "bought"})
