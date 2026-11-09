@@ -3785,6 +3785,18 @@ async def confirm_finance_draft(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
 
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+    keys = ("await", "finance_clarification_pending", "finance_draft_pending", "todoist_pending_action")
+    had_pending = any(key in context.user_data for key in keys)
+    for key in keys:
+        context.user_data.pop(key, None)
+    text = "Текущее действие отменено. Данные в базах не изменены." if had_pending else "Нет активного действия для отмены."
+    await update.effective_message.reply_text(text, reply_markup=MAIN_MENU)
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)
@@ -4663,6 +4675,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("memory", memory_command))
