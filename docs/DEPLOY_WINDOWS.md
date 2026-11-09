@@ -8,7 +8,7 @@
 git clone https://github.com/gutko36-rgb/dimka-agent.git
 cd dimka-agent
 git fetch origin
-git switch --track origin/feature/project-agent-foundation
+git switch --track origin/feature/project-knowledge-history
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
@@ -97,3 +97,16 @@ git pull origin main
 - Удали тестовый проект штатной командой после проверки, если он больше не нужен.
 
 Не запускай две копии бота с одним токеном. Для проверки новой ветки сначала останови текущий процесс либо используй отдельный тестовый токен. Не отправляй секреты в чат.
+
+
+## 7. Проверка истории и поиска по документам
+
+После переключения на ветку `feature/project-knowledge-history` проверь:
+
+- `/project_history ID` — лента создания проекта, этапов, задач, заметок и материалов.
+- `/project_search ID слово` — поиск по полям карточки и записям проекта.
+- Прикрепи текстовый PDF, DOCX или TXT и повтори поиск по уникальной фразе из документа.
+- Проверь документ больше 10 МБ: бот должен пропустить его.
+- Проверь сканированный PDF: бот должен сообщить, что текстовый слой не найден; OCR пока не выполняется.
+
+Поиск загружает поддерживаемые файлы из Telegram только в память и не сохраняет извлечённый текст в Supabase.
