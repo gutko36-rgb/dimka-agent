@@ -3629,12 +3629,12 @@ async def answer_finance_question(
         ]
         prompt = (
             "Разбери вопрос пользователя о его личных финансах. Верни только JSON: "
-            '{"period":"day|week|month|all","kind":"income|expense|null",'
+            '{"period":"day|week|month|all|custom","date_from":"YYYY-MM-DD|null","date_to":"YYYY-MM-DD|null","kind":"income|expense|null",'
             '"search_terms":["слова для фильтра по категории или заметке"],'
             '"project_title":"точное название проекта из списка или null",'
             '"confidence":0.0,"clarification":null}. '
             "Не отвечай на вопрос и не придумывай суммы — только извлеки фильтры. "
-            "Если пользователь не указал период, выбери month. "
+            "Если пользователь не указал период, выбери month. Для вчера, прошлого месяца или заданных дат используй custom и точные date_from/date_to. "
             "Для поиска по расходу/категории укажи до 5 близких поисковых слов. "
             "Если назван проект, project_title должен точно совпадать с одним названием из списка. "
             "Если вопрос неоднозначен, задай один короткий вопрос в clarification. "
@@ -3670,7 +3670,7 @@ async def answer_finance_question(
             return
 
         period = str(payload.get("period") or "month").lower()
-        if period not in {"day", "week", "month", "all"}:
+        if period not in {"day", "week", "month", "all", "custom"}:
             period = "month"
         kind = payload.get("kind")
         if kind not in {"income", "expense", None}:
@@ -3705,6 +3705,22 @@ async def answer_finance_question(
             start, end = finance_period("week", today)
         elif period == "month":
             start, end = finance_period("month", today)
+        elif period == "custom":
+            try:
+                start = dt_date.fromisoformat(str(payload.get("date_from") or ""))
+                end = dt_date.fromisoformat(str(payload.get("date_to") or ""))
+            except ValueError:
+                await update.effective_message.reply_text(
+                    "Не удалось определить даты периода. Уточни, за какой промежуток показать операции.",
+                    reply_markup=MAIN_MENU,
+                )
+                return
+            if end < start:
+                await update.effective_message.reply_text(
+                    "Дата окончания периода раньше даты начала. Уточни даты.",
+                    reply_markup=MAIN_MENU,
+                )
+                return
         else:
             start = end = None
         if start and end:
@@ -3735,6 +3751,7 @@ async def answer_finance_question(
             "week": "за текущую неделю",
             "month": "за текущий месяц",
             "all": "за всё время",
+            "custom": f"с {fmt_date(start.isoformat())} по {fmt_date(end.isoformat())}",
         }[period]
         lines = [f"📊 По сохранённым операциям {period_label}:"]
         if project_title:
