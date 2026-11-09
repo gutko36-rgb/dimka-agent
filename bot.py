@@ -14,6 +14,8 @@ from dotenv import load_dotenv
 from groq import AsyncGroq
 from supabase import create_client, Client
 
+from finance_agent import looks_like_finance, format_finance_operations, validate_finance_operations
+
 from telegram import (
     Update,
     BotCommand,
@@ -3609,6 +3611,239 @@ async def handle_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await status(update, context)
     elif text == BTN_HELP:
         await help_command(update, context)
+
+
+
+async def extract_finance_draft(user_id: int, message: str) -> tuple[list[dict] | None, str | None]:
+    """Extract transaction candidates with AI, then validate every field locally.
+
+    Returns (operations, clarification). operations=None means this was not a finance request.
+    """
+    today = await user_today(user_id)
+    projects = [p for p in await pj_list(user_id) if p.get("status") != "done"]
+    project_lines = [
+        f"- ID {p['id']}: {p['title']} [{p.get('status', 'active')}]"
+        for p in projects
+    ] or ["- Активных проектов нет."]
+    prompt = (
+        "Ты — строгий парсер финансовых операций. Не веди диалог и не давай советов. "
+        "Определи, сообщает ли пользователь о фактически совершённых доходах/расходах. "
+        "Не считай план, вопрос, намерение купить или гипотетический пример фактом. "
+        "Если это не запись о фактической операции, верни is_finance=false. "
+        "Если операция фактическая, верни is_finance=true и массив operations. "
+        "Каждая операция: kind ('income' или 'expense'), amount (число без валютного символа), "
+        "category (короткая категория), note (краткое назначение), date (YYYY-MM-DD или null), "
+        "project_id (числовой ID проекта или null), confidence (0..1). "
+        "Не угадывай сумму, тип, дату или проект. Если ключевое поле неоднозначно, "
+        "верни operations=[] и задай один конкретный вопрос в clarification. "
+        "Если пользователь упомянул проект по названию, сопоставь его только с точным "
+        "или однозначным названием из списка; иначе попроси уточнить. "
+        "Если в сообщении несколько реальных операций, верни каждую отдельно. "
+        "Относительные даты вычисляй от указанной сегодняшней даты. "
+        "Верни только JSON с ключами is_finance, operations, clarification. "
+        f"\nСегодня по часовому поясу пользователя: {today.isoformat()}."
+        f"\nДоступные проекты:\n" + "\n".join(project_lines)
+    )
+    response = await ai.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=[
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": message},
+        ],
+        temperature=0,
+        max_tokens=1200,
+        response_format={"type": "json_object"},
+    )
+    content = response.choices[0].message.content or "{}"
+    try:
+        raw = json.loads(content)
+    except json.JSONDecodeError:
+        logging.warning("Finance extractor returned invalid JSON")
+        return [], "Не смог надёжно разобрать операцию. Уточни сумму, доход это или расход, и назначение."
+
+    if not isinstance(raw, dict) or raw.get("is_finance") is not True:
+        return None, None
+
+    from finance_agent import validate_finance_operations
+    operations, clarification = validate_finance_operations(raw, projects, today)
+    if clarification:
+        return [], clarification
+
+    by_id = {int(p["id"]): p for p in projects}
+    for op in operations:
+        if op.get("project_id"):
+            op["project_title"] = by_id[op["project_id"]]["title"]
+    return operations, None
+
+
+async def create_finance_pending_action(
+    user_id: int, source_update_id: int, operations: list[dict]
+) -> dict:
+    """Persist the draft before showing confirmation; duplicate updates reuse the same draft."""
+    payload = {"operations": operations}
+    try:
+        result = await db_call(
+            supabase.table("finance_pending_actions")
+            .insert({
+                "telegram_id": user_id,
+                "source_update_id": source_update_id,
+                "payload": payload,
+                "status": "pending",
+            })
+            .select("*")
+            .execute
+        )
+        return result.data[0]
+    except Exception:
+        existing = await db_call(
+            supabase.table("finance_pending_actions")
+            .select("*")
+            .eq("telegram_id", user_id)
+            .eq("source_update_id", source_update_id)
+            .limit(1)
+            .execute
+        )
+        if existing.data:
+            return existing.data[0]
+        raise
+
+
+async def show_finance_confirmation(message, pending: dict):
+    from finance_agent import format_finance_operations
+    operations = pending["payload"]["operations"]
+    summary = format_finance_operations(operations)
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Да, записать", callback_data=f"finconfirm:yes:{pending['id']}"),
+        InlineKeyboardButton("❌ Нет, отмена", callback_data=f"finconfirm:no:{pending['id']}"),
+    ]])
+    await message.reply_text(
+        "Проверь распознанные финансовые операции. В базу пока ничего не записано.\n\n"
+        + summary
+        + "\n\nЗаписать всё перечисленное?",
+        reply_markup=keyboard,
+    )
+
+
+async def finance_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not is_authorized(update):
+        await query.answer("Доступ запрещён.", show_alert=True)
+        return
+    await query.answer()
+    parts = (query.data or "").split(":")
+    if len(parts) != 3 or parts[1] not in ("yes", "no") or not parts[2].isdigit():
+        await query.edit_message_text("Кнопка подтверждения некорректна. Ничего не записано.")
+        return
+
+    action, pending_id = parts[1], int(parts[2])
+    user_id = update.effective_user.id
+    try:
+        found = await db_call(
+            supabase.table("finance_pending_actions")
+            .select("*")
+            .eq("id", pending_id)
+            .eq("telegram_id", user_id)
+            .limit(1)
+            .execute
+        )
+        pending = (found.data or [None])[0]
+        if not pending:
+            await query.edit_message_text("Черновик не найден. Ничего не записано.")
+            return
+        if pending["status"] == "confirmed":
+            await query.edit_message_text("Эти операции уже были записаны ранее.")
+            return
+        if pending["status"] != "pending":
+            await query.edit_message_text("Этот черновик уже отменён или обрабатывается. Новых записей не создано.")
+            return
+
+        if action == "no":
+            await db_call(
+                supabase.table("finance_pending_actions")
+                .update({"status": "cancelled", "processed_at": datetime.now(dt_timezone.utc).isoformat()})
+                .eq("id", pending_id)
+                .eq("telegram_id", user_id)
+                .eq("status", "pending")
+                .execute
+            )
+            await query.edit_message_text("Отменено. Финансовые записи не создавались.")
+            return
+
+        claimed = await db_call(
+            supabase.table("finance_pending_actions")
+            .update({"status": "processing"})
+            .eq("id", pending_id)
+            .eq("telegram_id", user_id)
+            .eq("status", "pending")
+            .select("*")
+            .execute
+        )
+        if not claimed.data:
+            await query.edit_message_text("Черновик уже обрабатывается или был подтверждён.")
+            return
+        pending = claimed.data[0]
+
+        today = await user_today(user_id)
+        operations = pending["payload"]["operations"]
+        for index, op in enumerate(operations):
+            project_id = op.get("project_id")
+            if project_id is not None:
+                project = await pj_get(user_id, int(project_id))
+                if not project:
+                    raise ValueError(f"Проект {project_id} больше не найден у пользователя")
+            tx_date = dt_date.fromisoformat(op["tx_date"])
+            await fin_add_transaction(
+                user_id=user_id,
+                kind=op["kind"],
+                amount=float(op["amount"]),
+                category=op["category"],
+                note=op.get("note"),
+                tx_date=tx_date,
+                project_id=project_id,
+                source_update_id=int(pending["source_update_id"]),
+                source_item_index=index,
+            )
+
+        await db_call(
+            supabase.table("finance_pending_actions")
+            .update({
+                "status": "confirmed",
+                "processed_at": datetime.now(dt_timezone.utc).isoformat(),
+            })
+            .eq("id", pending_id)
+            .eq("telegram_id", user_id)
+            .eq("status", "processing")
+            .execute
+        )
+        await query.edit_message_text(
+            f"✅ Записал {len(operations)} финансовых операций. "
+            "Повторное нажатие не создаст дубликаты."
+        )
+        try:
+            await save_message(
+                user_id, "assistant",
+                f"Пользователь подтвердил запись {len(operations)} финансовых операций."
+            )
+        except Exception:
+            logging.exception("Не удалось сохранить подтверждение финансовой операции в историю")
+    except Exception:
+        logging.exception("Не удалось подтвердить финансовый черновик")
+        try:
+            await db_call(
+                supabase.table("finance_pending_actions")
+                .update({"status": "pending"})
+                .eq("id", pending_id)
+                .eq("telegram_id", user_id)
+                .eq("status", "processing")
+                .execute
+            )
+        except Exception:
+            logging.exception("Не удалось вернуть финансовый черновик в pending")
+        await query.edit_message_text(
+            "Не получилось завершить запись. Черновик сохранён, повтори подтверждение позже. "
+            "Уже записанные позиции защищены от дублей."
+        )
+
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
