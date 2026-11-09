@@ -4253,10 +4253,22 @@ def projects_keyboard(shown: list[dict], has_done: bool, show_all: bool) -> Inli
 def project_card_keyboard(n: int) -> InlineKeyboardMarkup:
     return ikb([
         [ib("➕ Этап", f"pj:add:stage:{n}"), ib("➕ Задача", f"pj:add:task:{n}"), ib("📝 Заметка", f"pj:add:note:{n}")],
+        [ib("📎 Добавить материал", f"pj:media:{n}"), ib("🗂 Материалы", f"pj:assets:{n}")],
         [ib("🤖 План от ИИ", f"pj:plan:{n}"), ib("☑️ Отметить", f"pj:mark:{n}")],
         [ib("✏️ Изменить", f"pj:edit:{n}"), ib("🗑 Убрать запись", f"pj:delmenu:{n}")],
         [ib("🗑 Удалить проект", f"pj:delproj:{n}"), ib("⬅️ К списку", "pj:list")],
     ])
+
+
+def project_assets_keyboard(project_id: int, assets: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for asset in assets:
+        icon = "🖼" if asset["media_type"] == "photo" else "📄"
+        label = asset.get("file_name") or asset.get("caption") or f"Материал №{asset['id']}"
+        rows.append([ib(f"{icon} {clip(label, 45)}", f"pj:asset:{project_id}:{asset['id']}")])
+    rows.append([ib("📎 Добавить материал", f"pj:media:{project_id}")])
+    rows.append([ib("⬅️ К проекту", f"pj:open:{project_id}")])
+    return ikb(rows)
 
 
 def project_created_keyboard(n: int) -> InlineKeyboardMarkup:
