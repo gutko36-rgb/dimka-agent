@@ -46,6 +46,18 @@ class ProjectPayloadTests(unittest.TestCase):
         self.assertIsNone(result["action"])
         self.assertIn("Не нашёл точное", result["clarification"])
 
+    def test_ambiguous_normalized_title_requires_clarification(self):
+        projects = [
+            {"id": 1, "title": "Пульт"},
+            {"id": 2, "title": "Пульт!"},
+        ]
+        result = parse_project_response(json.dumps({
+            "action": "add_note", "project_title": "Пульт",
+            "content": "Записать", "confidence": 0.99
+        }, ensure_ascii=False), self.today, projects)
+        self.assertIsNone(result["action"])
+        self.assertIn("нескольким проектам", result["clarification"])
+
     def test_low_confidence_requires_clarification(self):
         result = self.parse({"action": "add_note", "project_title": "Пульт 2.0", "confidence": 0.2})
         self.assertIsNone(result["action"])
