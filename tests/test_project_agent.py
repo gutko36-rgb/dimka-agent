@@ -64,6 +64,21 @@ class ProjectPayloadTests(unittest.TestCase):
         })
         self.assertEqual(result["value"], "active")
 
+    def test_requires_explicit_clear_instruction(self):
+        result = self.parse({
+            "action": "update_project", "project_title": "Пульт 2.0",
+            "field": "goal", "value": "", "confidence": 0.99
+        })
+        self.assertIsNone(result["action"])
+        self.assertIn("Уточни", result["clarification"])
+
+    def test_allows_explicit_clear(self):
+        result = self.parse({
+            "action": "update_project", "project_title": "Пульт 2.0",
+            "field": "goal", "value": "", "clear": True, "confidence": 0.99
+        })
+        self.assertIsNone(result["value"])
+
     def test_rejects_duplicate_project_creation(self):
         result = self.parse({
             "action": "create_project", "title": "Пульт 2.0", "confidence": 0.99
