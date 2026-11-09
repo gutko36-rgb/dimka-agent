@@ -38,7 +38,7 @@ def is_project_expense_query(text: str) -> bool:
     if not text:
         return False
     has_total = re.search(r"(?iu)\b(?:сколько|сумм[аыу]|итог)\b", text)
-    has_spend = re.search(r"(?iu)\b(?:потратил[а-яё]*|расход[а-яё]*|затрат[а-яё]*|уш[её]л[ао]?)\b", text)
+    has_spend = re.search(r"(?iu)\b(?:потратил[а-яё]*|потрачен[а-яё]*|расход[а-яё]*|затрат[а-яё]*|уш[её]л[ао]?)\b", text)
     return bool(has_total and has_spend)
 
 
@@ -46,10 +46,19 @@ def find_mentioned_projects(text: str, projects: list[dict]) -> list[dict]:
     """Find project titles explicitly present in a message; longest names win."""
     if not text:
         return []
-    matches = [
-        p for p in projects
-        if p.get("title") and re.search(re.escape(str(p["title"])), text, re.IGNORECASE)
-    ]
+    text_words = set(re.findall(r"(?iu)[a-zа-яё0-9]+", text))
+    matches = []
+    for project in projects:
+        title = str(project.get("title") or "").strip()
+        if not title:
+            continue
+        title_words = set(re.findall(r"(?iu)[a-zа-яё0-9]+", title))
+        meaningful_words = {word for word in title_words if not word.isdigit()}
+        if (
+            re.search(re.escape(title), text, re.IGNORECASE)
+            or (meaningful_words and meaningful_words.issubset(text_words))
+        ):
+            matches.append(project)
     if not matches:
         return []
     matches.sort(key=lambda p: len(str(p["title"])), reverse=True)
