@@ -3,6 +3,7 @@ from datetime import date
 
 from finance_agent import (
     format_finance_operations,
+    has_foreign_currency,
     looks_like_finance,
     validate_finance_operations,
 )
@@ -13,6 +14,11 @@ class FinanceIntentTests(unittest.TestCase):
         self.assertTrue(looks_like_finance("Сегодня потратил 450 рублей на обед"))
         self.assertTrue(looks_like_finance("Получил зарплату 75000"))
         self.assertFalse(looks_like_finance("Помоги спланировать неделю"))
+
+    def test_foreign_currency_detection(self):
+        self.assertTrue(has_foreign_currency("потратил 20 долларов на такси"))
+        self.assertTrue(has_foreign_currency("оплатил 10 EUR"))
+        self.assertFalse(has_foreign_currency("потратил 500 рублей"))
 
     def test_single_expense(self):
         ops, error = validate_finance_operations(
