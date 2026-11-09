@@ -4017,6 +4017,89 @@ async def finance_confirm_callback(update: Update, context: ContextTypes.DEFAULT
 
 
 
+
+async def handle_project_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    message = update.effective_message
+    project_id = context.user_data.get("project_media_pending")
+    if not project_id:
+        await message.reply_text(
+            "Чтобы прикрепить фото или документ, открой проект → «Добавить материал»."
+        )
+        return
+
+    user_id = update.effective_user.id
+    try:
+        project = await pj_get(user_id, int(project_id))
+        if not project:
+            context.user_data.pop("project_media_pending", None)
+            await message.reply_text("Проект не найден. Режим добавления материалов закрыт.")
+            return
+
+        if message.photo:
+            media = message.photo[-1]
+            media_type = "photo"
+            file_name = None
+            mime_type = "image/jpeg"
+        elif message.document:
+            media = message.document
+            media_type = "document"
+            file_name = media.file_name
+            mime_type = media.mime_type
+        else:
+            await message.reply_text("Поддерживаются фотографии и документы.")
+            return
+
+        payload = {
+            "telegram_id": user_id,
+            "project_id": int(project_id),
+            "telegram_file_id": media.file_id,
+            "telegram_file_unique_id": media.file_unique_id,
+            "media_type": media_type,
+            "file_name": file_name,
+            "mime_type": mime_type,
+            "caption": clip(message.caption or "", 1000) or None,
+            "source_message_id": message.message_id,
+        }
+        try:
+            saved = await db_call(
+                supabase.table("agent_project_assets")
+                .insert(payload)
+                .select("id")
+                .execute
+            )
+            asset_id = saved.data[0]["id"]
+            result_text = f"✅ Материал №{asset_id} прикреплён к проекту «{project['title']}»."
+        except Exception:
+            existing = await db_call(
+                supabase.table("agent_project_assets")
+                .select("id")
+                .eq("telegram_id", user_id)
+                .eq("telegram_file_unique_id", media.file_unique_id)
+                .limit(1)
+                .execute
+            )
+            if not existing.data:
+                raise
+            result_text = f"Этот файл уже прикреплён к проекту (материал №{existing.data[0]['id']})."
+
+        await message.reply_text(
+            result_text + "\nМожешь отправить ещё материалы или нажать «Готово».",
+            reply_markup=ikb([[ib("Готово", "pj:media_done")]]),
+        )
+    except Exception:
+        logging.exception("Не удалось прикрепить материал к проекту")
+        await message.reply_text(
+            "Не получилось сохранить материал. Проверь подключение к Supabase. "
+            "Режим добавления материалов оставил активным."
+        )
+
+
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)
