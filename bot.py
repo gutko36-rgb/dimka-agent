@@ -3764,7 +3764,7 @@ async def extract_finance_draft(user_id: int, message: str) -> tuple[list[dict] 
     mentioned_projects = find_mentioned_projects(message, projects)
     explicit_ids = {
         int(value) for value in re.findall(
-            r"(?iu)\\bпроект(?:а|е|у|ом)?\\s*(?:№|#)?\\s*(\\d+)\\b",
+            r"(?iu)\bпроект(?:а|е|у|ом)?\s*(?:№|#)?\s*(\d+)\b",
             message,
         )
     }
