@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from groq import AsyncGroq
 from supabase import create_client, Client
 
-from finance_agent import looks_like_finance, has_foreign_currency, format_finance_operations, validate_finance_operations
+from finance_agent import looks_like_finance, has_foreign_currency, is_project_expense_query, find_mentioned_projects, format_finance_operations, validate_finance_operations
 
 from telegram import (
     Update,
@@ -3611,6 +3611,85 @@ async def handle_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await status(update, context)
     elif text == BTN_HELP:
         await help_command(update, context)
+
+
+
+
+async def answer_project_expense_query(user_id: int, message: str) -> str | None:
+    """Answer a spending-total question from real finance rows linked to a project."""
+    from finance_agent import find_mentioned_projects, is_project_expense_query
+
+    if not is_project_expense_query(message):
+        return None
+
+    projects = await pj_list(user_id)
+    matches = find_mentioned_projects(message, projects)
+    if len(matches) > 1:
+        choices = "\n".join(f"- №{p['id']} — {p['title']}" for p in matches)
+        return "В сообщении подходят несколько проектов. Уточни, по какому считать:\n" + choices
+    if not matches:
+        if re.search(r"(?iu)\bпроект", message):
+            if not projects:
+                return "Пока нет проектов. Создай проект через /project_new."
+            choices = "\n".join(f"- №{p['id']} — {p['title']}" for p in projects[:20])
+            return "Не смог определить проект по названию. Выбери один из списка:\n" + choices
+        return None
+
+    project = matches[0]
+    today = await user_today(user_id)
+    lowered = message.casefold()
+    if "за всё время" in lowered or "за все время" in lowered or "всего" in lowered:
+        start, end, period_title = dt_date(2000, 1, 1), today, "за всё время"
+    elif "прошлом месяце" in lowered or "за прошлый месяц" in lowered:
+        first_this_month = today.replace(day=1)
+        end = first_this_month - timedelta(days=1)
+        start = end.replace(day=1)
+        period_title = "за прошлый месяц"
+    elif "вчера" in lowered:
+        start = end = today - timedelta(days=1)
+        period_title = "за вчера"
+    elif "сегодня" in lowered:
+        start = end = today
+        period_title = "за сегодня"
+    elif "недел" in lowered:
+        start, end = finance_period("week", today)
+        period_title = "за эту неделю"
+    else:
+        start, end = finance_period("month", today)
+        period_title = "за этот месяц"
+
+    rows = await fin_load_transactions(user_id, start.isoformat(), end.isoformat())
+    expenses = [
+        row for row in rows
+        if row.get("kind") == "expense" and row.get("project_id") == project["id"]
+    ]
+    total = sum(float(row["amount"]) for row in expenses)
+    lines = [
+        f"📁 Расходы по проекту «{project['title']}» {period_title}",
+        f"Период: {fmt_date(start.isoformat())} — {fmt_date(end.isoformat())}",
+        f"Всего: {money(total)}",
+        f"Операций: {len(expenses)}",
+    ]
+    if expenses:
+        categories: dict[str, float] = {}
+        for row in expenses:
+            category = row.get("category") or "без категории"
+            categories[category] = categories.get(category, 0.0) + float(row["amount"])
+        lines += ["", "По категориям:"]
+        for category, amount in sorted(categories.items(), key=lambda item: -item[1])[:8]:
+            lines.append(f"- {category}: {money(amount)}")
+        lines += ["", "Последние операции:"]
+        for row in expenses[:5]:
+            note = f" — {row['note']}" if row.get("note") else ""
+            lines.append(
+                f"- {fmt_date(row['tx_date'])}: {money(float(row['amount']))} "
+                f"({row.get('category') or 'без категории'}){note}"
+            )
+    else:
+        lines += ["", "В базе пока нет расходов, привязанных к этому проекту за выбранный период."]
+    lines += ["", "Источник: записи finance_transactions в Supabase."]
+    return "\n".join(lines)
+
 
 
 
