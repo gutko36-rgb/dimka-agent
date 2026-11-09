@@ -2,7 +2,7 @@ import json
 import unittest
 from datetime import date
 
-from finance_agent import looks_like_finance_entry, parse_finance_response
+from finance_agent import looks_like_finance_entry, looks_like_finance_question, parse_finance_response
 
 
 class FinanceIntentTests(unittest.TestCase):
@@ -25,6 +25,15 @@ class FinanceIntentTests(unittest.TestCase):
 
     def test_ignores_finance_question(self):
         self.assertFalse(looks_like_finance_entry("Сколько я потратил на машину в этом месяце?"))
+
+    def test_detects_read_only_finance_question(self):
+        self.assertTrue(looks_like_finance_question("Сколько я потратил на машину в этом месяце?"))
+
+    def test_detects_project_finance_question(self):
+        self.assertTrue(looks_like_finance_question("Сколько потратил на проект Пульт?"))
+
+    def test_ignores_non_finance_question(self):
+        self.assertFalse(looks_like_finance_question("Сколько задач на сегодня?"))
 
 
 class FinancePayloadTests(unittest.TestCase):
