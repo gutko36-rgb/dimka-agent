@@ -33,6 +33,8 @@ def looks_like_finance_entry(message: str) -> bool:
         return False
     if re.search(r"\b(?:если бы|хотел бы|мог бы|планирую|собираюсь)\b", text, re.IGNORECASE):
         return False
+    if re.search(r"\bбы\s+(?:потратил|израсходовал|купил|оплатил|заплатил|получил|заработал)\w*\b", text, re.IGNORECASE):
+        return False
     if re.search(r"\b(?:потратил|израсходовал|купил|оплатил|заплатил|получил|заработал)\w*\s+бы\b", text, re.IGNORECASE):
         return False
     return bool(_FINANCE_ACTION.search(text) and _AMOUNT_HINT.search(text))
