@@ -2862,9 +2862,15 @@ async def project_search_command(update: Update, context: ContextTypes.DEFAULT_T
             if reported_size and reported_size > 10 * 1024 * 1024:
                 skipped.append(f"{file_name}: больше 10 МБ")
                 continue
+            if reported_size and downloaded_bytes + reported_size > 25 * 1024 * 1024:
+                skipped.append("Достигнут общий лимит загрузки 25 МБ")
+                break
             buffer = io.BytesIO()
             await telegram_file.download_to_memory(out=buffer)
             content = buffer.getvalue()
+            if len(content) > 10 * 1024 * 1024:
+                skipped.append(f"{file_name}: больше 10 МБ")
+                continue
             downloaded_bytes += len(content)
             if downloaded_bytes > 25 * 1024 * 1024:
                 skipped.append("Достигнут общий лимит загрузки 25 МБ")
@@ -5378,6 +5384,8 @@ async def post_init(app: Application) -> None:
         BotCommand("project_new", "Новый проект: /project_new название"),
         BotCommand("projects", "Список проектов"),
         BotCommand("project", "Карточка проекта: /project номер"),
+        BotCommand("project_history", "История проекта: /project_history номер"),
+        BotCommand("project_search", "Поиск в проекте: /project_search номер текст"),
         BotCommand("project_set", "Изменить проект: /project_set номер поле значение"),
         BotCommand("project_plan", "ИИ предложит этапы: /project_plan номер"),
         BotCommand("stage", "Этап: /stage номер текст"),
