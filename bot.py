@@ -4078,6 +4078,7 @@ async def handle_project_media(update: Update, context: ContextTypes.DEFAULT_TYP
                 supabase.table("agent_project_assets")
                 .select("id")
                 .eq("telegram_id", user_id)
+                .eq("project_id", int(project_id))
                 .eq("telegram_file_unique_id", media.file_unique_id)
                 .limit(1)
                 .execute
