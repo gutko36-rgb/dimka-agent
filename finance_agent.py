@@ -23,7 +23,11 @@ _AMOUNT_HINT = re.compile(r"(?:\d|тысяч|тыс\.?|руб(?:лей|ля|ль
 def looks_like_finance_entry(message: str) -> bool:
     """True only for likely completed money events, not balance questions/plans."""
     text = (message or "").strip()
-    return bool(text and _FINANCE_ACTION.search(text) and _AMOUNT_HINT.search(text))
+    if not text or _NEGATED_ACTION.search(text):
+        return False
+    if re.search(r"\\b(?:если бы|хотел бы|мог бы|планирую|собираюсь)\\b", text, re.IGNORECASE):
+        return False
+    return bool(_FINANCE_ACTION.search(text) and _AMOUNT_HINT.search(text))
 
 
 def _norm(value: str) -> str:
