@@ -245,7 +245,8 @@ HELP_TEXT = (
     "/payments — список платежей, /payment_del номер — удалить\n"
     "/buy 80000 Ноутбук — покупка в планах\n"
     "/buys — список покупок; /buy_check, /buy_done, /buy_del с номером\n"
-    "Если просто написать мне «потратил 500», я это НЕ запишу: только командой.\n\n"
+    "Можно написать обычной фразой «потратил 500 рублей на продукты»: я покажу черновик и запишу только после подтверждения.\n"
+    "/cancel — отменить ожидающее действие или черновик.\n\n"
     "Проекты:\n"
     "/project_new название — создать проект\n"
     "/projects — список, /project 3 — карточка проекта №3\n"
@@ -4194,7 +4195,10 @@ async def ask_input(update: Update, context: ContextTypes.DEFAULT_TYPE, action: 
 
 
 async def clear_await_state(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Любая команда или кнопка меню отменяет ожидание ответа. Остальные обработчики работают как обычно."""
+    """Любая команда или кнопка меню отменяет ожидание ответа, кроме явной команды /cancel."""
+    message = update.effective_message
+    if message and (message.text or "").split()[0:1] == ["/cancel"]:
+        return
     context.user_data.pop("await", None)
 
 
