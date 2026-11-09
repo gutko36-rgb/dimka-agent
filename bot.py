@@ -257,6 +257,8 @@ HELP_TEXT = (
     "/p_done номер, /p_undo номер, /p_del номер — отметить, вернуть, удалить\n"
     "/project_plan 3 — ИИ предложит этапы, ты решишь, сохранять ли\n"
     "/project_del 3 да — удалить проект\n"
+    "/asset 3 — прикрепить следующее фото или документ; /assets 3 — открыть материалы\n"
+    "Можно обычным текстом попросить добавить этап, задачу или заметку, создать проект или показать прогресс. Запись — только после подтверждения.\n"
     "/deadlines — ближайшие сроки проектов и платежей\n"
     "/backup — резервная копия всех данных файлом (по воскресеньям приходит сама)\n\n"
     "Команды:\n"
@@ -2986,8 +2988,8 @@ async def project_del_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if len(args) < 2 or args[1].lower() != "да":
         await update.effective_message.reply_text(
-            f"Проект удалится вместе со всеми этапами, задачами и заметками. "
-            f"Если уверен, напиши: /project_del {args[0]} да",
+            f"Проект удалится вместе со всеми этапами, задачами, заметками и прикреплёнными материалами. "
+            f"Финансовые операции сохранятся, но потеряют привязку к проекту. Если уверен, напиши: /project_del {args[0]} да",
             reply_markup=MAIN_MENU,
         )
         return
@@ -4763,6 +4765,8 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if area == "ui":
             if act == "cancel":
+                context.user_data.pop("project_action_pending", None)
+                context.user_data.pop("project_asset_target", None)
                 await query.edit_message_text("Отменено.")
             elif act == "tasks":
                 await tasks_command(update, ctx([]))
@@ -5266,9 +5270,6 @@ def main():
     app.add_handler(CommandHandler("asset", project_asset_command))
     app.add_handler(CommandHandler("assets", project_assets_command))
     app.add_handler(CallbackQueryHandler(project_action_callback, pattern="^pjact:"))
-    app.add_handler(CommandHandler("asset", project_asset_command))
-    app.add_handler(CommandHandler("assets", project_assets_command))
-    app.add_handler(CallbackQueryHandler(project_action_callback, pattern="^pjact:"))
     app.add_handler(CallbackQueryHandler(plan_callback, pattern="^plan:"))
     app.add_handler(CallbackQueryHandler(report_callback, pattern="^report:"))
     app.add_handler(CallbackQueryHandler(todoist_confirm_callback, pattern="^td:"))
@@ -5285,7 +5286,6 @@ def main():
     )
     app.add_handler(CallbackQueryHandler(ui_callback, pattern=r"^(fin|pay|buy|pj|mem|sched|tz|ui):"))
 
-    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_project_asset))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_project_asset))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
