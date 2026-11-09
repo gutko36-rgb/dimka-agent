@@ -4786,6 +4786,7 @@ def main():
     app.add_handler(CallbackQueryHandler(plan_callback, pattern="^plan:"))
     app.add_handler(CallbackQueryHandler(report_callback, pattern="^report:"))
     app.add_handler(CallbackQueryHandler(todoist_confirm_callback, pattern="^td:"))
+    app.add_handler(CallbackQueryHandler(finance_confirm_callback, pattern=r"^finconfirm:"))
 
     # Кнопки меню должны идти РАНЬШЕ обычных сообщений, иначе их съест ИИ.
     buttons_pattern = "^(" + "|".join(re.escape(b) for b in MENU_BUTTONS) + ")$"
