@@ -31,7 +31,7 @@ class BotIdentityTests(unittest.TestCase):
         self.assertIsNone(load_bot_identity({"BOT_ID": "projects"}).coordination_chat_id)
 
     def test_rejects_invalid_identifiers(self):
-        for key, value in (("BOT_ID", "Dimka"), ("BOT_ROLE", "finance agent")):
+        for key, value in (("BOT_ID", "bad id"), ("BOT_ROLE", "finance agent")):
             with self.subTest(key=key):
                 with self.assertRaises(ValueError):
                     load_bot_identity({key: value})
