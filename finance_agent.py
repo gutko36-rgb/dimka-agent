@@ -34,6 +34,29 @@ def looks_like_finance_entry(message: str) -> bool:
     return bool(_FINANCE_ACTION.search(text) and _AMOUNT_HINT.search(text))
 
 
+_FINANCE_QUERY_TOPIC = re.compile(
+    r"\b(?:расход(?:ы|ов)?|доход(?:ы|ов)?|финанс(?:ы|ах)?|бюджет|"
+    r"потратил[а]?|заработал[а]?|платеж(?:и|ей)?|деньги)\b",
+    re.IGNORECASE,
+)
+_FINANCE_QUERY_ACTION = re.compile(
+    r"\b(?:сколько|покажи|сводка|итог(?:и)?|на что|куда|проанализируй|"
+    r"по проекту|за месяц|за неделю|за сегодня)\b",
+    re.IGNORECASE,
+)
+
+
+def looks_like_finance_question(message: str) -> bool:
+    """Detect read-only finance questions without intercepting transaction statements."""
+    text = (message or "").strip()
+    if not text or looks_like_finance_entry(text):
+        return False
+    return bool(
+        _FINANCE_QUERY_TOPIC.search(text)
+        and (_FINANCE_QUERY_ACTION.search(text) or text.endswith("?"))
+    )
+
+
 def _norm(value: str) -> str:
     return " ".join(re.sub(r"[^\w]+", " ", value.casefold(), flags=re.UNICODE).split())
 
