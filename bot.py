@@ -3152,6 +3152,7 @@ PROJECT_AGENT_PROMPT = """
   "due_date": "дата ГГГГ-ММ-ДД или пустая строка",
   "field": "description|goal|status|deadline|result",
   "value": "новое значение поля",
+  "clear": false,
   "confidence": 0.0,
   "question": "уточняющий вопрос"
 }
@@ -3161,6 +3162,7 @@ PROJECT_AGENT_PROMPT = """
 - Для добавления этапа/задачи/заметки укажи точное project_title из списка.
 - Вопросы о статусе и прогрессе — project_query.
 - Изменение полей проекта — update_project, но только если пользователь явно попросил.
+- Устанавливай clear=true только если пользователь явно попросил очистить поле; иначе верни новое value.
 - Удаление проекта, этапов, задач и материалов этим агентом запрещено.
 - Не превращай идеи, планы и гипотетические фразы в записи.
 - Если не хватает названия проекта, содержания или даты, верни clarification.
@@ -3443,6 +3445,19 @@ async def handle_project_asset(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     try:
+        duplicate = await db_call(
+            supabase.table("agent_project_assets")
+            .select("id")
+            .eq("telegram_id", user_id)
+            .eq("project_id", int(project_id))
+            .eq("telegram_file_unique_id", unique_id)
+            .limit(1)
+            .execute
+        )
+        if duplicate.data:
+            context.user_data.pop("project_asset_target", None)
+            await update.effective_message.reply_text("Этот файл уже прикреплён к проекту.")
+            return
         result = await db_call(
             supabase.table("agent_project_assets")
             .insert({
@@ -4875,7 +4890,7 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif act == "delproj":
                 n = parts[2]
                 await msg.reply_text(
-                    "Проект удалится вместе со всеми этапами, задачами и заметками. Удалить?",
+                    "Проект удалится вместе с этапами, задачами, заметками и материалами. Финансовые операции останутся без привязки к проекту. Удалить?",
                     reply_markup=ikb([[ib("🗑 Да, удалить", f"pj:delyes:{n}"), ib("Отмена", "ui:cancel")]]),
                 )
             elif act == "delyes":
