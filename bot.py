@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 from dotenv import load_dotenv
 from groq import AsyncGroq
-from finance_agent import looks_like_finance_entry, parse_finance_response
+from finance_agent import looks_like_finance_entry, looks_like_finance_question, parse_finance_response
 from supabase import create_client, Client
 
 from telegram import (
@@ -3613,6 +3613,165 @@ async def handle_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await help_command(update, context)
 
 
+async def answer_finance_question(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    message: str,
+):
+    """Read-only natural-language finance query. All totals are calculated from Supabase rows."""
+    user_id = update.effective_user.id
+    try:
+        today = await user_today(user_id)
+        projects = await pj_list(user_id)
+        project_lines = [
+            {"id": int(p["id"]), "title": p["title"]}
+            for p in projects
+        ]
+        prompt = (
+            "Разбери вопрос пользователя о его личных финансах. Верни только JSON: "
+            '{"period":"day|week|month|all","kind":"income|expense|null",'
+            '"search_terms":["слова для фильтра по категории или заметке"],'
+            '"project_title":"точное название проекта из списка или null",'
+            '"confidence":0.0,"clarification":null}. '
+            "Не отвечай на вопрос и не придумывай суммы — только извлеки фильтры. "
+            "Если пользователь не указал период, выбери month. "
+            "Для поиска по расходу/категории укажи до 5 близких поисковых слов. "
+            "Если назван проект, project_title должен точно совпадать с одним названием из списка. "
+            "Если вопрос неоднозначен, задай один короткий вопрос в clarification. "
+            f"Текущая дата пользователя: {today.isoformat()}. "
+            "Проекты: " + json.dumps(project_lines, ensure_ascii=False)
+        )
+        response = await ai.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": message},
+            ],
+            temperature=0.1,
+            max_tokens=700,
+            response_format={"type": "json_object"},
+        )
+        payload = json.loads(response.choices[0].message.content or "{}")
+        if not isinstance(payload, dict):
+            raise ValueError("Некорректный формат фильтров")
+        if payload.get("clarification"):
+            await update.effective_message.reply_text(
+                str(payload["clarification"])[:400] + "\\nНикакие данные не изменены.",
+                reply_markup=MAIN_MENU,
+            )
+            return
+
+        confidence = float(payload.get("confidence", 1))
+        if confidence < 0.75:
+            await update.effective_message.reply_text(
+                "Не до конца понял, какие финансовые данные показать. Уточни период или категорию.",
+                reply_markup=MAIN_MENU,
+            )
+            return
+
+        period = str(payload.get("period") or "month").lower()
+        if period not in {"day", "week", "month", "all"}:
+            period = "month"
+        kind = payload.get("kind")
+        if kind not in {"income", "expense", None}:
+            kind = None
+
+        project_id = None
+        project_title = payload.get("project_title")
+        if project_title:
+            normalize = lambda value: " ".join(re.sub(r"[^\\w]+", " ", str(value).casefold()).split())
+            wanted = normalize(project_title)
+            matches = [p for p in project_lines if normalize(p["title"]) == wanted]
+            if len(matches) != 1:
+                await update.effective_message.reply_text(
+                    f"Не нашёл точный проект «{str(project_title)[:100]}». Посмотри названия в /projects.",
+                    reply_markup=MAIN_MENU,
+                )
+                return
+            project_id = matches[0]["id"]
+            project_title = matches[0]["title"]
+
+        query = (
+            supabase.table("finance_transactions")
+            .select("id, kind, amount, category, note, tx_date, project_id")
+            .eq("telegram_id", user_id)
+            .order("tx_date", desc=True)
+            .order("id", desc=True)
+            .limit(5000)
+        )
+        if period == "day":
+            start = end = today
+        elif period == "week":
+            start, end = finance_period("week", today)
+        elif period == "month":
+            start, end = finance_period("month", today)
+        else:
+            start = end = None
+        if start and end:
+            query = query.gte("tx_date", start.isoformat()).lte("tx_date", end.isoformat())
+        if kind:
+            query = query.eq("kind", kind)
+        if project_id is not None:
+            query = query.eq("project_id", project_id)
+
+        result = await db_call(query.execute)
+        rows = result.data or []
+        terms = payload.get("search_terms") or []
+        if isinstance(terms, str):
+            terms = [terms]
+        terms = [str(term).strip().casefold() for term in terms if str(term).strip()][:5]
+        if terms:
+            rows = [
+                row for row in rows
+                if any(
+                    term in f"{row.get('category') or ''} {row.get('note') or ''}".casefold()
+                    for term in terms
+                )
+            ]
+
+        income, expense = sum_by_kind(rows)
+        period_label = {
+            "day": "сегодня",
+            "week": "за текущую неделю",
+            "month": "за текущий месяц",
+            "all": "за всё время",
+        }[period]
+        lines = [f"📊 По сохранённым операциям {period_label}:"]
+        if project_title:
+            lines.append(f"Проект: {project_title}")
+        if terms:
+            lines.append("Поиск: " + ", ".join(terms))
+        if not rows:
+            lines += ["", "Подходящих операций в Supabase не нашёл."]
+        else:
+            if kind == "expense":
+                lines.append(f"Расходы: {money(expense)}")
+            elif kind == "income":
+                lines.append(f"Доходы: {money(income)}")
+            else:
+                lines.append(f"Доходы: {money(income)}")
+                lines.append(f"Расходы: {money(expense)}")
+                lines.append(f"Разница: {money(income - expense)}")
+
+            categories = {}
+            for row in rows:
+                label = row.get("category") or "без категории"
+                categories[label] = categories.get(label, 0.0) + float(row["amount"])
+            if categories:
+                lines += ["", "Категории:"]
+                for label, total in sorted(categories.items(), key=lambda item: -item[1])[:6]:
+                    lines.append(f"- {label}: {money(total)}")
+            lines += ["", f"Операций найдено: {len(rows)}."]
+        lines += ["", "Это сумма записей в базе, а не фактический остаток банковского счёта."]
+        await update.effective_message.reply_text("\\n".join(lines), reply_markup=MAIN_MENU)
+    except Exception:
+        logging.exception("Не удалось обработать финансовый запрос")
+        await update.effective_message.reply_text(
+            "Не удалось получить финансовые данные из Supabase. Ничего не изменял.",
+            reply_markup=MAIN_MENU,
+        )
+
+
 async def prepare_finance_draft(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -3837,6 +3996,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if looks_like_finance_entry(user_message):
         await update.effective_message.chat.send_action("typing")
         await prepare_finance_draft(update, context, user_message, update.update_id)
+        return
+
+    if looks_like_finance_question(user_message):
+        await update.effective_message.chat.send_action("typing")
+        await answer_finance_question(update, context, user_message)
         return
 
     await update.effective_message.chat.send_action("typing")
