@@ -3720,15 +3720,16 @@ async def prepare_finance_draft(
 async def confirm_finance_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = update.effective_user.id
-    draft = context.user_data.get("finance_draft_pending")
-    if not draft:
-        await query.edit_message_text("Черновик не найден или уже обработан. Повтори исходное сообщение.")
-        return
-
     if query.data == "fin:cancel":
         context.user_data.pop("finance_draft_pending", None)
         context.user_data.pop("finance_clarification_pending", None)
         await query.edit_message_text("Отменено. Финансовые записи не создавались.")
+        return
+
+    draft = context.user_data.get("finance_draft_pending")
+    if not draft:
+        context.user_data.pop("finance_clarification_pending", None)
+        await query.edit_message_text("Черновик не найден или уже обработан. Повтори исходное сообщение.")
         return
 
     inserted = 0
@@ -3798,14 +3799,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_message.strip().lower() in {"отмена", "отмени", "cancel"}:
             await update.effective_message.reply_text("Отменено. Ничего не записано.", reply_markup=MAIN_MENU)
             return
-        combined = clarification["message"] + "\\nУточнение пользователя: " + user_message
+        combined = clarification["message"] + "\nУточнение пользователя: " + user_message
         await prepare_finance_draft(update, context, combined, clarification["source_update_id"])
         return
 
     if context.user_data.get("finance_draft_pending"):
-        await update.effective_message.reply_text(
-            "У тебя уже есть непроверенный финансовый черновик. Сначала подтверди или отмени его кнопками под сообщением."
-        )
+        if user_message.strip().lower() in {"отмена", "отмени", "cancel"}:
+            context.user_data.pop("finance_draft_pending", None)
+            await update.effective_message.reply_text("Черновик отменён. Ничего не записано.", reply_markup=MAIN_MENU)
+        else:
+            await update.effective_message.reply_text(
+                "У тебя уже есть непроверенный финансовый черновик. Сначала подтверди или отмени его кнопками под сообщением."
+            )
         return
 
     # Если бот перед этим попросил что-то написать (сумму, название), это ответ на его просьбу.
