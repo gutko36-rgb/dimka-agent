@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 from dotenv import load_dotenv
 from groq import AsyncGroq
+from finance_agent import looks_like_finance_entry, parse_finance_response
 from supabase import create_client, Client
 
 from telegram import (
@@ -3611,6 +3612,178 @@ async def handle_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await help_command(update, context)
 
 
+async def prepare_finance_draft(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    message: str,
+    source_update_id: int,
+):
+    """Распознаёт финансовые события, но никогда не пишет их без подтверждения."""
+    user_id = update.effective_user.id
+    try:
+        today = await user_today(user_id)
+        projects = await pj_list(user_id)
+        project_lines = [
+            {"id": int(p["id"]), "title": p["title"]}
+            for p in projects
+            if p.get("status") != "done"
+        ]
+        project_context = json.dumps(project_lines, ensure_ascii=False)
+        system_prompt = (
+            "Ты извлекаешь финансовые операции из сообщения пользователя на русском языке. "
+            "Верни только JSON-объект формата: "
+            '{"transactions":[{"kind":"income|expense","amount":number,'
+            '"category":"короткая категория","note":"описание или null",'
+            '"date":"YYYY-MM-DD","project_title":"точное название проекта или null",'
+            '"confidence":0.0,"needs_clarification":"вопрос или null"}],'
+            '"clarification":null}. '
+            "Извлекай ВСЕ отдельные доходы и расходы, не объединяй их. "
+            "Не выдумывай операции, суммы, даты, категории и проекты. "
+            "Суммы вроде 15 тысяч, 2 тыс., 1,5 тысячи преобразуй в число рублей. "
+            f"Если дата не указана, используй {today.isoformat()}. "
+            "Тип операции определяй по смыслу; перевод между своими счетами не является доходом или расходом. "
+            "Если неясно, доход это, расход, возврат долга или перевод — задай уточнение. "
+            "Если пользователь говорит «на проект», но не называет какой, задай уточнение. "
+            "Если неясна категория и это влияет на учёт, задай один короткий вопрос. "
+            "project_title разрешено заполнять только точным названием из списка проектов ниже; "
+            "не угадывай и не создавай проекты. Если проект не указан — null. "
+            "При любой существенной неоднозначности верни transactions:[] и clarification с одним вопросом. "
+            "Для каждой операции укажи confidence от 0 до 1; ниже 0.75 не ставь."
+            "\nПроекты пользователя: " + project_context
+        )
+        response = await ai.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": message},
+            ],
+            temperature=0.1,
+            max_tokens=1400,
+            response_format={"type": "json_object"},
+        )
+        raw = response.choices[0].message.content or "{}"
+        parsed = parse_finance_response(raw, today, project_lines)
+    except Exception:
+        logging.exception("Не удалось распознать финансовые операции")
+        await update.effective_message.reply_text(
+            "Не смог надёжно разобрать финансовое сообщение. Ничего не записывал. "
+            "Попробуй указать суммы и назначение отдельнее.",
+            reply_markup=MAIN_MENU,
+        )
+        return
+
+    if parsed["clarification"]:
+        context.user_data["finance_clarification_pending"] = {
+            "message": message,
+            "source_update_id": source_update_id,
+        }
+        await update.effective_message.reply_text(
+            "Перед записью нужно уточнить: " + parsed["clarification"] +
+            "\nОтветь одним сообщением. Пока ничего не сохранено.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="fin:cancel")]]),
+        )
+        return
+
+    transactions = parsed["transactions"]
+    if not transactions:
+        await update.effective_message.reply_text(
+            "Не нашёл в сообщении подтверждённых доходов или расходов. Ничего не записывал.",
+            reply_markup=MAIN_MENU,
+        )
+        return
+
+    context.user_data["finance_draft_pending"] = {
+        "transactions": transactions,
+        "source_update_id": source_update_id,
+    }
+    lines = ["💰 Подготовил финансовые операции. Проверь перед записью:", ""]
+    for index, row in enumerate(transactions, start=1):
+        sign = "+" if row["kind"] == "income" else "−"
+        label = "Доход" if row["kind"] == "income" else "Расход"
+        line = (
+            f"{index}. {label}: {sign}{money(row['amount'])} · {row['category']} "
+            f"· {fmt_date(row['tx_date'].isoformat())}"
+        )
+        if row.get("note"):
+            line += f"\n   {row['note']}"
+        if row.get("project_title"):
+            line += f"\n   Проект: {row['project_title']}"
+        lines.append(line)
+    lines += ["", "В базу пока ничего не записано."]
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Подтвердить запись", callback_data="fin:confirm"),
+        InlineKeyboardButton("❌ Отмена", callback_data="fin:cancel"),
+    ]])
+    await update.effective_message.reply_text("\n".join(lines), reply_markup=keyboard)
+
+
+async def confirm_finance_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = update.effective_user.id
+    draft = context.user_data.get("finance_draft_pending")
+    if not draft:
+        await query.edit_message_text("Черновик не найден или уже обработан. Повтори исходное сообщение.")
+        return
+
+    if query.data == "fin:cancel":
+        context.user_data.pop("finance_draft_pending", None)
+        context.user_data.pop("finance_clarification_pending", None)
+        await query.edit_message_text("Отменено. Финансовые записи не создавались.")
+        return
+
+    inserted = 0
+    duplicates = 0
+    try:
+        for index, row in enumerate(draft["transactions"]):
+            was_inserted = await fin_add_transaction(
+                user_id,
+                row["kind"],
+                row["amount"],
+                row["category"],
+                row.get("note"),
+                row["tx_date"],
+                project_id=row.get("project_id"),
+                source_update_id=draft["source_update_id"],
+                source_item_index=index,
+            )
+            if was_inserted:
+                inserted += 1
+            else:
+                duplicates += 1
+
+        today = await user_today(user_id)
+        start, end = finance_period("month", today)
+        rows = await fin_load_transactions(user_id, start.isoformat(), end.isoformat())
+        income, expense = sum_by_kind(rows)
+    except Exception:
+        logging.exception("Ошибка при подтверждённой записи финансового черновика")
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔁 Повторить безопасно", callback_data="fin:confirm"),
+            InlineKeyboardButton("❌ Отмена черновика", callback_data="fin:cancel"),
+        ]])
+        await query.edit_message_text(
+            "Не удалось завершить запись всех операций. Часть могла сохраниться. "
+            "Повторная попытка не создаст дубликаты. Проверь подключение и попробуй ещё раз.",
+            reply_markup=keyboard,
+        )
+        return
+
+    context.user_data.pop("finance_draft_pending", None)
+    if inserted == 0 and duplicates:
+        result_line = "Эти операции уже были сохранены ранее; повторов не создано."
+    else:
+        result_line = f"Сохранено операций: {inserted}."
+        if duplicates:
+            result_line += f" Уже существовало без повторной записи: {duplicates}."
+    await query.edit_message_text(
+        "✅ " + result_line +
+        f"\n\nИтоги за месяц по данным Supabase:"
+        f"\nДоходы: {money(income)}"
+        f"\nРасходы: {money(expense)}"
+        f"\nРазница: {money(income - expense)}"
+    )
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)
@@ -3619,6 +3792,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_message = update.effective_message.text
 
+    # Ответ на уточнение финансового агента относится к исходному сообщению.
+    clarification = context.user_data.pop("finance_clarification_pending", None)
+    if clarification:
+        if user_message.strip().lower() in {"отмена", "отмени", "cancel"}:
+            await update.effective_message.reply_text("Отменено. Ничего не записано.", reply_markup=MAIN_MENU)
+            return
+        combined = clarification["message"] + "\\nУточнение пользователя: " + user_message
+        await prepare_finance_draft(update, context, combined, clarification["source_update_id"])
+        return
+
+    if context.user_data.get("finance_draft_pending"):
+        await update.effective_message.reply_text(
+            "У тебя уже есть непроверенный финансовый черновик. Сначала подтверди или отмени его кнопками под сообщением."
+        )
+        return
+
     # Если бот перед этим попросил что-то написать (сумму, название), это ответ на его просьбу.
     pending = context.user_data.pop("await", None)
     if pending:
@@ -3626,6 +3815,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if handler:
             await handler(update, ArgsContext(context, pending["prefix"] + user_message.split()))
             return
+
+    if looks_like_finance_entry(user_message):
+        await update.effective_message.chat.send_action("typing")
+        await prepare_finance_draft(update, context, user_message, update.update_id)
+        return
 
     await update.effective_message.chat.send_action("typing")
 
@@ -4017,7 +4211,9 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await backup_command(update, ctx([]))
 
         elif area == "fin":
-            if act == "exp":
+            if act in ("confirm", "cancel"):
+                await confirm_finance_draft(update, context)
+            elif act == "exp":
                 await ask_input(update, context, "expense", [], PROMPTS["expense"])
             elif act == "inc":
                 await ask_input(update, context, "income", [], PROMPTS["income"])
