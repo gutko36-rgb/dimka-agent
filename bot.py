@@ -2511,6 +2511,32 @@ async def pj_items(user_id: int, project_id: int) -> list[dict]:
     return result.data or []
 
 
+async def pj_assets(user_id: int, project_id: int) -> list[dict]:
+    result = await db_call(
+        supabase.table("agent_project_assets")
+        .select("id, media_type, file_name, mime_type, caption, created_at")
+        .eq("telegram_id", user_id)
+        .eq("project_id", project_id)
+        .order("created_at", desc=True)
+        .limit(30)
+        .execute
+    )
+    return result.data or []
+
+
+async def pj_asset_get(user_id: int, project_id: int, asset_id: int) -> dict | None:
+    result = await db_call(
+        supabase.table("agent_project_assets")
+        .select("*")
+        .eq("id", asset_id)
+        .eq("telegram_id", user_id)
+        .eq("project_id", project_id)
+        .limit(1)
+        .execute
+    )
+    return (result.data or [None])[0]
+
+
 async def pj_progress(user_id: int) -> dict:
     """{project_id: {'stage': [сделано, всего], 'task': [сделано, всего]}} по всем проектам сразу."""
     result = await db_call(
