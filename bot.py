@@ -3864,6 +3864,51 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.effective_message.chat.send_action("typing")
 
+    # Свободный финансовый ввод: сначала извлекаем и проверяем черновик.
+    # Ни одна операция не попадёт в базу до явного нажатия «Да, записать».
+    if looks_like_finance(user_message):
+        try:
+            operations, clarification = await extract_finance_draft(user_id, user_message)
+            if operations is not None:
+                await save_message(user_id, "user", user_message)
+                if clarification:
+                    await save_message(user_id, "assistant", clarification)
+                    await update.effective_message.reply_text(
+                        clarification + "\n\nПока ничего не записывал.",
+                        reply_markup=MAIN_MENU,
+                    )
+                    return
+                pending = await create_finance_pending_action(
+                    user_id, update.update_id, operations
+                )
+                if pending.get("status") == "confirmed":
+                    await update.effective_message.reply_text(
+                        "Это сообщение уже было обработано: повторную запись не создавал.",
+                        reply_markup=MAIN_MENU,
+                    )
+                    return
+                if pending.get("status") != "pending":
+                    await update.effective_message.reply_text(
+                        "Черновик этой операции уже отменён или обрабатывается. "
+                        "Если нужно, отправь операцию новым сообщением.",
+                        reply_markup=MAIN_MENU,
+                    )
+                    return
+                await show_finance_confirmation(update.effective_message, pending)
+                await save_message(
+                    user_id, "assistant",
+                    "Подготовлен финансовый черновик; ожидается явное подтверждение пользователя."
+                )
+                return
+        except Exception:
+            logging.exception("Не удалось подготовить финансовый черновик")
+            await update.effective_message.reply_text(
+                "Не получилось безопасно разобрать финансовую операцию. "
+                "Ничего не записано. Можешь воспользоваться /expense или /income.",
+                reply_markup=MAIN_MENU,
+            )
+            return
+
     # Если недавно был опрос, это сообщение считаем ответом на него.
     survey = None
     extra_system = ""
