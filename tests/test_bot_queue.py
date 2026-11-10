@@ -115,7 +115,7 @@ class BotQueueClientTests(unittest.TestCase):
         )
 
     def test_claim_inbox_rejects_invalid_limits(self):
-        for kwargs in ({"limit": 0}, {"limit": True}, {"lease_seconds": 10}, {"lease_seconds": 3601}):
+        for kwargs in ({"limit": 0}, {"limit": True}, {"lease_seconds": 10}, {"lease_seconds": 3601}, {"message_type": "unknown"}):
             with self.subTest(kwargs=kwargs):
                 with self.assertRaises(BotQueueValidationError):
                     self.queue.claim_inbox(**kwargs)
