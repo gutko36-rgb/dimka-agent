@@ -16,6 +16,16 @@ from typing import Any
 BOT_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
+def admin_credentials(environ: Any) -> tuple[str, str]:
+    """Read the project URL and server-side key without exposing them."""
+    url = str(environ.get("SUPABASE_URL", "")).strip()
+    service_key = str(
+        environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+        or environ.get("SUPABASE_KEY", "")
+    ).strip()
+    return url, service_key
+
+
 def provision_bot_identity(
     client: Any,
     *,
@@ -96,10 +106,19 @@ def main() -> int:
     parser.add_argument("--email", required=True, help="Unique Auth email for this worker")
     args = parser.parse_args()
 
-    url = os.environ.get("SUPABASE_URL", "").strip()
-    service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(".env", override=False)
+    except ImportError:
+        pass
+
+    url, service_key = admin_credentials(os.environ)
     if not url or not service_key:
-        print("Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in the trusted admin environment.", file=sys.stderr)
+        print(
+            "Set SUPABASE_URL and the server-side SUPABASE_KEY "
+            "(or SUPABASE_SERVICE_ROLE_KEY) in the project .env file.",
+            file=sys.stderr,
+        )
         return 2
 
     try:

@@ -56,9 +56,9 @@ Worker-процесс запускается отдельно через `bot_wo
 
 Схема очереди уже применена в Supabase. Перед запуском worker нужно создать ему отдельную Auth identity. Делать это следует на доверенной административной машине, где доступен service-role key:
 
+Убедись, что в основном `.env` уже заполнены `SUPABASE_URL` и серверный `SUPABASE_KEY` (service-role/secret key). Скрипт сам прочитает эти значения из файла; копировать ключ в PowerShell не нужно.
+
 ```powershell
-$env:SUPABASE_URL="https://<project-ref>.supabase.co"
-$env:SUPABASE_SERVICE_ROLE_KEY="<service-role-key>"
 python scripts/provision_bot_identity.py --bot-id finance --role finance --display-name "Финансовый агент" --email finance-worker@example.com
 ```
 
@@ -115,9 +115,9 @@ Worker регистрирует безопасный smoke-test обработч
 
 Для агента проектов используется отдельная Auth identity `projects`. Она не создаётся автоматически вместе с финансовой identity. На доверенной административной машине выполни:
 
+Убедись, что в основном `.env` уже заполнены `SUPABASE_URL` и серверный `SUPABASE_KEY`. Скрипт сам прочитает их из файла. Выполни одну команду:
+
 ```powershell
-$env:SUPABASE_URL="https://<project-ref>.supabase.co"
-$env:SUPABASE_SERVICE_ROLE_KEY="<service-role-key>"
 python scripts/provision_bot_identity.py --bot-id projects --role projects --display-name "Агент проектов" --email projects-worker@example.com
 ```
 
