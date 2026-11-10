@@ -12,14 +12,17 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import psycopg
+try:
+    import psycopg
+except ImportError:  # Local unit-test environments need not install dev dependencies.
+    psycopg = None
 
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@unittest.skipUnless(DATABASE_URL, "DATABASE_URL is only set in the PostgreSQL CI job")
+@unittest.skipUnless(DATABASE_URL and psycopg is not None, "Requires the PostgreSQL CI job and psycopg dev dependency")
 class BotQueuePostgresTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
