@@ -28,3 +28,10 @@ OCR-текст пока не записывается в отдельную та
 python -m py_compile media_input.py bot.py
 python -m unittest discover -s tests -p "test_media_input.py" -v
 ```
+
+
+## Внешние API и стоимость
+
+Распознавание речи использует Groq Speech-to-Text; опубликованная цена модели whisper-large-v3-turbo — около $0.04 за час аудио, с минимальным биллингом 10 секунд на запрос. Фактическая стоимость зависит от актуального тарифа аккаунта. OCR использует Groq Vision и тарифицируется по токенам/модели; перед включением проверь актуальный тариф.
+
+Официальная документация: https://console.groq.com/docs/speech-to-text и https://console.groq.com/docs/vision.
