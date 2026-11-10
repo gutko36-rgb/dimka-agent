@@ -178,10 +178,11 @@ class BotQueuePostgresTests(unittest.TestCase):
                 """
                 INSERT INTO public.bot_messages
                     (task_id, from_bot_id, to_bot_id, message_type, payload,
-                     idempotency_key, expires_at)
+                     idempotency_key, created_at, expires_at)
                 VALUES
                     (gen_random_uuid(), 'dimka', 'finance', 'task', '{}'::jsonb,
-                     'expired-before-claim', now() - interval '1 minute')
+                     'expired-before-claim', now() - interval '2 minutes',
+                     now() - interval '1 minute')
                 RETURNING id
                 """
             ).fetchone()
@@ -225,7 +226,8 @@ class BotQueuePostgresTests(unittest.TestCase):
             admin.execute(
                 """
                 UPDATE public.bot_messages
-                   SET expires_at = now() - interval '1 minute',
+                   SET created_at = now() - interval '2 minutes',
+                       expires_at = now() - interval '1 minute',
                        claimed_at = now() - interval '2 minutes'
                  WHERE id = %s
                 """,
