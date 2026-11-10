@@ -1,7 +1,10 @@
 import unittest
 from types import SimpleNamespace
 
+from bot_identity import BotIdentity
+from bot_queue import BotQueueClient
 from bot_worker_service import (
+    build_worker,
     create_authenticated_queue,
     verify_worker_auth_user,
 )
@@ -109,6 +112,32 @@ class WorkerServiceTests(unittest.TestCase):
                 {"BOT_ID": "finance", "SUPABASE_URL": "url"},
                 client_factory=lambda *_: self.fail("client must not be created"),
             )
+
+    def test_build_worker_registers_finance_domain_handlers(self):
+        queue = BotQueueClient(
+            object(),
+            BotIdentity("finance", "finance", "Финансовый агент"),
+        )
+        worker = build_worker(queue)
+
+        self.assertEqual(
+            set(worker.handlers),
+            {
+                "diagnostics.echo",
+                "finance.summary",
+                "finance.forecast",
+                "finance.budget_analysis",
+                "finance.distribution",
+            },
+        )
+        result = worker.handlers["finance.summary"]({
+            "transactions": [
+                {"kind": "income", "amount": 1000, "tx_date": "2026-11-01"},
+                {"kind": "expense", "amount": 250, "category": "food", "tx_date": "2026-11-02"},
+            ]
+        })
+        self.assertEqual(result["income"], "1000.00")
+        self.assertEqual(result["expense"], "250.00")
 
 
 if __name__ == "__main__":
