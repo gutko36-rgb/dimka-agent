@@ -73,7 +73,6 @@ create table if not exists public.lifestyle_habit_logs (
     source_update_id bigint not null,
     created_at timestamptz not null default now(),
     constraint lifestyle_habit_logs_owner_source_unique unique (telegram_id, source_update_id),
-    constraint lifestyle_habit_logs_owner_habit_date_unique unique (telegram_id, habit_id, log_date),
     constraint lifestyle_habit_logs_habit_owner_fk
         foreign key (habit_id, telegram_id)
         references public.lifestyle_habits (id, telegram_id)
@@ -81,7 +80,10 @@ create table if not exists public.lifestyle_habit_logs (
 );
 
 create index if not exists lifestyle_habit_logs_owner_date_idx
-    on public.lifestyle_habit_logs (telegram_id, log_date desc, habit_id);
+    on public.lifestyle_habit_logs (telegram_id, log_date desc, habit_id, created_at desc);
+
+create index if not exists lifestyle_habit_logs_owner_habit_date_idx
+    on public.lifestyle_habit_logs (telegram_id, habit_id, log_date, created_at desc);
 
 -- Atomic, owner-scoped progress update with idempotency and audit history.
 create or replace function public.record_lifestyle_goal_progress(
