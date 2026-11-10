@@ -107,8 +107,9 @@ class BotQueueClient:
         *,
         limit: int = 20,
         lease_seconds: int = 300,
+        message_type: str = "task",
     ) -> list[dict[str, Any]]:
-        """Atomically claim available messages for this bot.
+        """Atomically claim messages of one type for this bot.
 
         PostgreSQL uses FOR UPDATE SKIP LOCKED so concurrent workers cannot
         claim the same message. Expired leases are retried up to max_attempts.
@@ -121,10 +122,16 @@ class BotQueueClient:
             or not 30 <= lease_seconds <= 3600
         ):
             raise BotQueueValidationError("lease_seconds must be between 30 and 3600")
+        if not isinstance(message_type, str) or message_type not in MESSAGE_TYPES:
+            raise BotQueueValidationError("Unsupported message_type")
 
         result = self._client.rpc(
             "claim_bot_messages",
-            {"p_limit": limit, "p_lease_seconds": lease_seconds},
+            {
+                "p_limit": limit,
+                "p_lease_seconds": lease_seconds,
+                "p_message_type": message_type,
+            },
         ).execute()
         return list(getattr(result, "data", None) or [])
 
