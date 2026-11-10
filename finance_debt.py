@@ -139,7 +139,7 @@ class FinanceDebtStore:
         existing = await self.get_debt_by_update(owner, update_id)
         if not existing:
             raise RuntimeError("Не удалось получить созданную запись долга")
-        expected = ("direction", "counterparty", "title", "amount", "due_date")
+        expected = ("direction", "counterparty", "title", "amount", "due_date", "note")
         for key in expected:
             if str(existing.get(key)) != str(payload.get(key)):
                 raise ValueError("Этот Telegram update уже использован для другого долга")
