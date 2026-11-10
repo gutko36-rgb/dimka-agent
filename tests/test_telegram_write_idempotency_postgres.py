@@ -20,7 +20,16 @@ class TelegramWriteIdempotencyPostgresTests(unittest.TestCase):
     def setUpClass(cls):
         with psycopg.connect(DATABASE_URL) as conn:
             conn.execute((ROOT / "tests/sql/telegram_idempotency_schema_stub.sql").read_text(encoding="utf-8"))
-            conn.execute((ROOT / "docs/sql/TELEGRAM_WRITE_IDEMPOTENCY_PROPOSAL.sql").read_text(encoding="utf-8"))
+            migration_paths = (
+                "supabase/migrations/20261109170507_finance_project_link_and_idempotency.sql",
+                "supabase/migrations/20261109170516_finance_multi_item_idempotency.sql",
+                "supabase/migrations/20261109172848_finance_pending_confirmation_actions.sql",
+                "supabase/migrations/20261109173659_project_material_attachments.sql",
+                "supabase/migrations/20261109173851_project_asset_dedup_per_project.sql",
+                "supabase/migrations/20261110120000_telegram_write_idempotency.sql",
+            )
+            for migration_path in migration_paths:
+                conn.execute((ROOT / migration_path).read_text(encoding="utf-8"))
 
     def setUp(self):
         tables = (
