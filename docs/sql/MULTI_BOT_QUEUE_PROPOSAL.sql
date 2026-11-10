@@ -198,6 +198,7 @@ begin
            completed_at = now(),
            last_error = 'Claim lease expired; maximum attempts reached'
      where m.to_bot_id = v_bot_id
+       and m.message_type = 'task'
        and m.status = 'processing'
        and m.claimed_at < now() - pg_catalog.make_interval(secs => p_lease_seconds)
        and m.attempt_count >= m.max_attempts;
@@ -207,6 +208,7 @@ begin
         select m.id
           from public.bot_messages as m
          where m.to_bot_id = v_bot_id
+           and m.message_type = 'task'
            and (m.expires_at is null or m.expires_at > now())
            and m.attempt_count < m.max_attempts
            and (
