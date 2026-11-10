@@ -69,7 +69,7 @@ def build_finance_debt_handlers(
                 reply_markup=main_menu,
             )
             return
-        await update.effective_message.reply_text(render_debts(rows), reply_markup=main_menu)
+        await update.effective_message.reply_text(render_debts(rows, format_money), reply_markup=main_menu)
 
     async def debt_add_command(update: Any, context: Any) -> None:
         if not await _ready(update):
@@ -159,7 +159,7 @@ def build_finance_debt_handlers(
             end = date(today.year, today.month, calendar.monthrange(today.year, today.month)[1])
             budgets = await store.list_budgets(user_id, today)
             transactions = await load_transactions(user_id, start.isoformat(), end.isoformat())
-            report = render_budget_report(transactions, budgets, today)
+            report = render_budget_report(transactions, budgets, today, format_money)
         except Exception:
             await update.effective_message.reply_text(
                 "Не удалось собрать бюджет по данным Supabase.",
@@ -237,7 +237,7 @@ def build_finance_debt_handlers(
             values = parse_distribution(" ".join(context.args or []))
             weights = await store.list_weights(update.effective_user.id)
             weight_map = {row["category"]: row["weight"] for row in weights}
-            report = render_distribution(values, weight_map)
+            report = render_distribution(values, weight_map, format_money)
         except ValueError as exc:
             await update.effective_message.reply_text(
                 f"{exc}\nФормат: /allocate доход | обязательные расходы | долги | накопления",
