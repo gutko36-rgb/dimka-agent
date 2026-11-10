@@ -628,7 +628,7 @@ async def load_day_surveys(telegram_id: int, survey_date: str) -> list[dict]:
     return result.data or []
 
 
-async def record_survey_answer(survey: dict, user_message: str, ai_answer: str) -> None:
+async def record_survey_answer(telegram_id: int, survey: dict, user_message: str, ai_answer: str) -> None:
     """Дописываем сообщение пользователя к ответу на опрос и сохраняем вывод ИИ."""
     old_answer = survey.get("answer") or ""
     new_answer = (old_answer + "\n" + user_message).strip()
@@ -640,6 +640,7 @@ async def record_survey_answer(survey: dict, user_message: str, ai_answer: str) 
             "answered_at": datetime.now(dt_timezone.utc).isoformat(),
         })
         .eq("id", survey["id"])
+        .eq("telegram_id", telegram_id)
         .execute
     )
 
@@ -1539,30 +1540,31 @@ async def report_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===================== СТАТИСТИКА =====================
 
-async def count_rows(table: str, **filters) -> int:
-    """Считаем строки в таблице (с необязательными фильтрами вида колонка=значение)."""
-    query = supabase.table(table).select("*", count="exact")
+async def count_rows(table: str, telegram_id: int, **filters) -> int:
+    """Считаем только строки владельца (с необязательными дополнительными фильтрами)."""
+    query = supabase.table(table).select("*", count="exact").eq("telegram_id", telegram_id)
     for column, value in filters.items():
         query = query.eq(column, value)
     result = await db_call(query.limit(1).execute)
     return result.count or 0
 
 
-async def safe_count(table: str, **filters) -> str:
+async def safe_count(table: str, telegram_id: int, **filters) -> str:
     """Как count_rows, но при ошибке не падает, а возвращает «ошибка»."""
     try:
-        return str(await count_rows(table, **filters))
+        return str(await count_rows(table, telegram_id, **filters))
     except Exception:
         logging.exception("Не удалось посчитать строки в таблице %s", table)
         return "ошибка"
 
 
-async def edge_date(table: str, newest: bool) -> str:
-    """Дата самой новой или самой старой записи в таблице."""
+async def edge_date(table: str, telegram_id: int, newest: bool) -> str:
+    """Дата самой новой или самой старой записи владельца."""
     try:
         result = await db_call(
             supabase.table(table)
             .select("created_at")
+            .eq("telegram_id", telegram_id)
             .order("created_at", desc=newest)
             .limit(1)
             .execute
@@ -1575,15 +1577,15 @@ async def edge_date(table: str, newest: bool) -> str:
         return "ошибка"
 
 
-async def build_stats_text() -> str:
+async def build_stats_text(telegram_id: int) -> str:
     lines = ["📊 Что лежит в базе\n"]
 
     # --- Переписка ---
-    total = await safe_count("conversations")
-    from_user = await safe_count("conversations", role="user")
-    from_bot = await safe_count("conversations", role="assistant")
-    first_date = await edge_date("conversations", newest=False)
-    last_date = await edge_date("conversations", newest=True)
+    total = await safe_count("conversations", telegram_id)
+    from_user = await safe_count("conversations", role="user", telegram_id)
+    from_bot = await safe_count("conversations", role="assistant", telegram_id)
+    first_date = await edge_date("conversations", telegram_id, newest=False)
+    last_date = await edge_date("conversations", telegram_id, newest=True)
     lines += [
         "💬 Переписка (conversations)",
         f"Всего сообщений: {total}",
@@ -1594,8 +1596,8 @@ async def build_stats_text() -> str:
     ]
 
     # --- Память ---
-    active = await safe_count("memories", status="active")
-    archived = await safe_count("memories", status="archived")
+    active = await safe_count("memories", status="active", telegram_id)
+    archived = await safe_count("memories", status="archived", telegram_id)
     lines += [
         "🧠 Память (memories)",
         f"Активных записей: {active}",
@@ -1606,6 +1608,7 @@ async def build_stats_text() -> str:
         result = await db_call(
             supabase.table("memories")
             .select("category, importance")
+            .eq("telegram_id", telegram_id)
             .eq("status", "active")
             .limit(1000)
             .execute
@@ -1628,31 +1631,31 @@ async def build_stats_text() -> str:
     lines.append("")
 
     # --- Опросы ---
-    surveys_total = await safe_count("daily_surveys")
+    surveys_total = await safe_count("daily_surveys", telegram_id)
     lines += [
         "⏰ Опросы (daily_surveys)",
         f"Отправлено опросов: {surveys_total}",
     ]
     for kind in SURVEY_ORDER:
-        count = await safe_count("daily_surveys", kind=kind)
+        count = await safe_count("daily_surveys", kind=kind, telegram_id)
         lines.append(f"  • {SURVEYS[kind]['title']}: {count}")
     lines.append("")
 
     # --- Отчёты ---
-    reports_total = await safe_count("analytics_reports")
+    reports_total = await safe_count("analytics_reports", telegram_id)
     lines += [
         "📈 Отчёты (analytics_reports)",
         f"Сохранено отчётов: {reports_total}",
     ]
     for report_kind, label in (("day", "Дневных"), ("week", "Недельных"), ("month", "Месячных")):
-        count = await safe_count("analytics_reports", kind=report_kind)
+        count = await safe_count("analytics_reports", kind=report_kind, telegram_id)
         lines.append(f"  • {label}: {count}")
     lines.append("")
 
     # --- Остальные таблицы ---
-    profiles = await safe_count("profiles")
-    daily_logs = await safe_count("daily_logs")
-    insights = await safe_count("ai_insights")
+    profiles = await safe_count("profiles", telegram_id)
+    daily_logs = await safe_count("daily_logs", telegram_id)
+    insights = await safe_count("ai_insights", telegram_id)
     lines += [
         "🗂 Остальные таблицы",
         f"Профили (profiles): {profiles}",
@@ -2551,6 +2554,10 @@ async def pj_update(user_id: int, project_id: int, **fields) -> bool:
 async def pj_add_item(
     user_id: int, project_id: int, kind: str, content: str, due: dt_date | None
 ) -> dict:
+    # Defense in depth: do not rely only on the caller having checked ownership.
+    project = await pj_get(user_id, project_id)
+    if not project:
+        raise ValueError("Проект не найден или принадлежит другому пользователю")
     result = await db_call(
         supabase.table("agent_project_items")
         .insert({
@@ -3865,7 +3872,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.effective_message.chat.send_action("typing")
     try:
-        text = await build_stats_text()
+        text = await build_stats_text(update.effective_user.id)
         await update.effective_message.reply_text(text, reply_markup=MAIN_MENU)
     except Exception:
         logging.exception("Не удалось собрать статистику")
@@ -4611,7 +4618,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if survey:
         try:
-            await record_survey_answer(survey, user_message, answer)
+            await record_survey_answer(user_id, survey, user_message, answer)
         except Exception:
             logging.exception("Не удалось сохранить ответ на опрос")
 
@@ -5111,7 +5118,7 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 BACKUP_TABLES = [
     "profiles", "conversations", "memories", "daily_surveys", "analytics_reports",
     "daily_logs", "ai_insights", "finance_transactions", "finance_payments",
-    "finance_purchases", "agent_projects", "agent_project_items", "agent_project_assets",
+    "finance_purchases", "finance_pending_actions", "agent_projects", "agent_project_items", "agent_project_assets",
 ]
 BACKUP_PAGE = 1000
 BACKUP_MAX_ROWS = 200_000
@@ -5120,11 +5127,11 @@ BACKUP_MAX_BYTES = 45 * 1024 * 1024  # лимит Telegram для файла о�
 STATUS_KB = ikb([[ib("💾 Резервная копия", "ui:backup")]])
 
 
-async def fetch_all_rows(table: str, ordered: bool) -> list[dict]:
+async def fetch_all_rows(table: str, telegram_id: int, ordered: bool) -> list[dict]:
     rows: list[dict] = []
     offset = 0
     while len(rows) < BACKUP_MAX_ROWS:
-        query = supabase.table(table).select("*")
+        query = supabase.table(table).select("*").eq("telegram_id", telegram_id)
         if ordered:
             query = query.order("id")
         result = await db_call(query.range(offset, offset + BACKUP_PAGE - 1).execute)
@@ -5136,24 +5143,24 @@ async def fetch_all_rows(table: str, ordered: bool) -> list[dict]:
     return rows
 
 
-async def dump_table(table: str) -> dict:
-    """Читает таблицу целиком. Если нет колонки id для сортировки, читает без неё."""
+async def dump_table(table: str, telegram_id: int) -> dict:
+    """Читает только строки владельца. Если нет колонки id, читает без сортировки."""
     try:
-        rows = await fetch_all_rows(table, ordered=True)
+        rows = await fetch_all_rows(table, telegram_id, ordered=True)
     except Exception:
         try:
-            rows = await fetch_all_rows(table, ordered=False)
+            rows = await fetch_all_rows(table, telegram_id, ordered=False)
         except Exception as error:
             logging.warning("Таблица %s пропущена в копии: %s", table, error)
             return {"count": 0, "rows": [], "error": "таблица недоступна"}
     return {"count": len(rows), "rows": rows}
 
 
-async def make_backup_file() -> tuple[bytes, str, dict]:
-    """Возвращает (содержимое файла, имя файла, сколько строк в каждой таблице)."""
+async def make_backup_file(telegram_id: int) -> tuple[bytes, str, dict]:
+    """Возвращает резервную копию только данных указанного владельца."""
     tables = {}
     for table in BACKUP_TABLES:
-        tables[table] = await dump_table(table)
+        tables[table] = await dump_table(table, telegram_id)
 
     stamp = datetime.now(dt_timezone.utc).strftime("%Y-%m-%d_%H-%M")
     payload = {
@@ -5171,7 +5178,7 @@ async def make_backup_file() -> tuple[bytes, str, dict]:
 
 
 async def send_backup(bot, chat_id: int, auto: bool = False) -> None:
-    data, name, counts = await make_backup_file()
+    data, name, counts = await make_backup_file(chat_id)
     total = sum(counts.values())
     caption = (
         ("🗄 Автоматическая резервная копия" if auto else "🗄 Резервная копия")
