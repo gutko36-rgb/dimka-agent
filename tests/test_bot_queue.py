@@ -144,7 +144,6 @@ class BotQueueClientTests(unittest.TestCase):
     def test_fetch_inbox_is_scoped_to_current_bot(self):
         self.queue.fetch_inbox(limit=5)
         self.assertIn(("eq", ("to_bot_id", "dimka"), {}), self.supabase.calls)
-        self.assertIn(("eq", ("status", "processing"), {}), self.supabase.calls)
         self.assertIn(("eq", ("status", "pending"), {}), self.supabase.calls)
         self.assertIn(("limit", (5,), {}), self.supabase.calls)
 
@@ -160,6 +159,7 @@ class BotQueueClientTests(unittest.TestCase):
         self.assertIn("completed_at", update)
         self.assertIn(("eq", ("id", "message-1"), {}), self.supabase.calls)
         self.assertIn(("eq", ("to_bot_id", "dimka"), {}), self.supabase.calls)
+        self.assertIn(("eq", ("status", "processing"), {}), self.supabase.calls)
 
     def test_update_status_rejects_unknown_status(self):
         with self.assertRaises(BotQueueValidationError):
