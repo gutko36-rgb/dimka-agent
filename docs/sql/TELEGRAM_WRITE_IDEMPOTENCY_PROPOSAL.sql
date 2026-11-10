@@ -37,6 +37,9 @@ alter table public.agent_project_items
 create unique index if not exists agent_project_items_owner_source_item_uidx
     on public.agent_project_items (telegram_id, source_update_id, source_item_index);
 
+alter table public.daily_surveys
+    add column if not exists last_answer_update_id bigint;
+
 create unique index if not exists daily_surveys_owner_date_kind_uidx
     on public.daily_surveys (telegram_id, survey_date, kind);
 
