@@ -3966,20 +3966,25 @@ async def handle_project_asset(update: Update, context: ContextTypes.DEFAULT_TYP
     )
     if VISION_OCR_ENABLED and (mime_type or "").lower() in {"image/jpeg", "image/png", "image/webp"}:
         try:
-            telegram_file = await context.bot.get_file(file_id)
-            image_buffer = io.BytesIO()
-            await telegram_file.download_to_memory(out=image_buffer)
-            extracted = await extract_image_text(
-                ai,
-                image_buffer.getvalue(),
-                mime_type=mime_type,
-                model=GROQ_VISION_MODEL,
-            )
-            if extracted and extracted != "Текст не обнаружен.":
+            if getattr(media, "file_size", None) and media.file_size > 15 * 1024 * 1024:
                 await update.effective_message.reply_text(
-                    "🧾 Текст, распознанный на изображении (проверь его перед использованием):\n\n"
-                    + clip(extracted, 3500)
+                    "Файл сохранён, но OCR пропущен: изображение больше 15 МБ."
                 )
+            else:
+                telegram_file = await context.bot.get_file(file_id)
+                image_buffer = io.BytesIO()
+                await telegram_file.download_to_memory(out=image_buffer)
+                extracted = await extract_image_text(
+                    ai,
+                    image_buffer.getvalue(),
+                    mime_type=mime_type,
+                    model=GROQ_VISION_MODEL,
+                )
+                if extracted and extracted.strip().rstrip(".") != "Текст не обнаружен":
+                    await update.effective_message.reply_text(
+                        "🧾 Текст, распознанный на изображении (проверь его перед использованием):\n\n"
+                        + clip(extracted, 3500)
+                    )
         except Exception:
             logging.exception("OCR изображения проекта не выполнен; сам файл уже сохранён")
             await update.effective_message.reply_text(
