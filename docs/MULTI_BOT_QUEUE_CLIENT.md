@@ -110,3 +110,43 @@ python scripts/smoke_test_worker.py
 Worker регистрирует безопасный smoke-test обработчик `diagnostics.echo` и чистые финансовые расчётные handlers: `finance.summary`, `finance.forecast`, `finance.budget_analysis`, `finance.distribution`. Они принимают только явно переданные JSON-снимки данных, не читают пользовательские таблицы, не записывают финансовые операции и не вызывают внешние API.
 
 Основной бот может отправлять read-only финансовые вопросы в очередь через `FINANCE_QUEUE_ENABLED=true`. До отправки он сам проверяет владельца и выбирает только его строки из `finance_transactions`; в payload не передаётся Telegram ID. Флаг по умолчанию `false`. Включай его только когда worker постоянно запущен в отдельном окне/сервисе. Из Telegram автоматически маршрутизируются `finance.summary` для read-only финансовых вопросов и `finance.forecast` для команды `/forecast`; бюджетный анализ и распределение зарегистрированы в worker, но ещё не подключены к командам основного бота. Черновики финансовых операций и любые записи остаются в главном боте и требуют явного подтверждения.
+
+## Отдельный worker проектов
+
+Для агента проектов используется отдельная Auth identity `projects`. Она не создаётся автоматически вместе с финансовой identity. На доверенной административной машине выполни:
+
+```powershell
+$env:SUPABASE_URL="https://<project-ref>.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY="<service-role-key>"
+python scripts/provision_bot_identity.py --bot-id projects --role projects --display-name "Агент проектов" --email projects-worker@example.com
+```
+
+Сохрани выведенные `BOT_AUTH_EMAIL` и `BOT_AUTH_PASSWORD` в приватный файл `.env.worker.projects` в корне репозитория:
+
+```env
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_ANON_KEY=<publishable-or-anon-key>
+BOT_ID=projects
+BOT_ROLE=projects
+BOT_DISPLAY_NAME=Агент проектов
+BOT_AUTH_EMAIL=projects-worker@example.com
+BOT_AUTH_PASSWORD=<generated-password>
+BOT_WORKER_BATCH_SIZE=10
+```
+
+Файл `.env.worker.projects` игнорируется Git. В нём не должно быть `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_KEY` или Telegram token.
+
+Запуск worker проектов в отдельном окне PowerShell:
+
+```powershell
+$env:BOT_WORKER_ENV_FILE=".env.worker.projects"
+python bot_worker_service.py
+```
+
+Финансовый worker продолжает запускаться отдельно из `.env.worker`:
+
+```powershell
+python bot_worker_service.py
+```
+
+Только после успешной аутентификации и запуска project worker добавь `PROJECTS_QUEUE_ENABLED=true` в основной `.env` и перезапусти `python bot.py`. По умолчанию флаг выключен. В очередь направляются только read-only запросы о статусе проекта; создание, изменение и другие записи остаются в основном боте и требуют подтверждения владельца.
