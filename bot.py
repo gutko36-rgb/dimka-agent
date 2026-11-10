@@ -4652,7 +4652,6 @@ async def answer_finance_question(
                         "kind": row.get("kind"),
                         "amount": row.get("amount"),
                         "category": row.get("category"),
-                        "note": row.get("note"),
                         "tx_date": row.get("tx_date"),
                     }
                     for row in rows
