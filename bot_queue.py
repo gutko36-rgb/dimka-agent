@@ -83,8 +83,8 @@ class BotQueueClient:
                     raise BotQueueValidationError(f"{field_name} must be a UUID") from exc
         if not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key.strip()) <= 200:
             raise BotQueueValidationError("idempotency_key must contain 1..200 characters")
-        if not isinstance(schema_version, int) or isinstance(schema_version, bool) or schema_version < 1:
-            raise BotQueueValidationError("schema_version must be a positive integer")
+        if not isinstance(schema_version, int) or isinstance(schema_version, bool) or not 1 <= schema_version <= 32767:
+            raise BotQueueValidationError("schema_version must be between 1 and 32767")
         if not isinstance(hop_count, int) or isinstance(hop_count, bool) or not 0 <= hop_count <= MAX_HOP_COUNT:
             raise BotQueueValidationError(f"hop_count must be between 0 and {MAX_HOP_COUNT}")
 
