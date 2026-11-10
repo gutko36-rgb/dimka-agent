@@ -64,7 +64,7 @@ create table public.daily_logs (
     checkin_type text not null,
     content text
 );
-create table public.finance_transactions (
+create table if not exists public.finance_transactions (
     id bigserial primary key,
     telegram_id bigint not null,
     source_update_id bigint,
