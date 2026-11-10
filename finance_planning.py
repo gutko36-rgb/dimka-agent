@@ -141,12 +141,14 @@ def forecast_balance(
         if not raw_due:
             continue
         due = _as_date(raw_due, "debt due_date")
-        if not as_of <= due <= until:
+        if due > until:
             continue
-        amount = _positive_money(
-            debt.get("amount_remaining", debt.get("amount")),
-            "debt amount",
-        )
+        if due < as_of:
+            due = as_of  # Overdue open debt is due immediately in the forecast.
+        raw_amount = debt.get("amount_remaining")
+        if raw_amount is None:
+            raw_amount = debt.get("amount")
+        amount = _positive_money(raw_amount, "debt amount")
         direction = str(debt.get("direction") or "").strip().lower()
         if direction in {"owed_by_me", "i_owe", "payable"}:
             signed_amount = -amount
@@ -212,9 +214,15 @@ def analyze_budget(
         if raw_limit is None:
             result.append(BudgetLine(category, spent, None, None, None))
             continue
-        limit = _positive_money(raw_limit, f"budget {category}")
+        limit = money(raw_limit)
+        if limit < ZERO:
+            raise ValueError(f"Бюджет {category} не может быть отрицательным")
         remaining = (limit - spent).quantize(CENT)
-        utilization = (spent / limit * Decimal("100")).quantize(CENT)
+        utilization = (
+            (spent / limit * Decimal("100")).quantize(CENT)
+            if limit > ZERO
+            else (ZERO if spent == ZERO else None)
+        )
         result.append(BudgetLine(category, spent, limit, remaining, utilization))
     return tuple(result)
 
