@@ -139,8 +139,6 @@ Supabase Auth identity/JWT. Главный Димка принимает соо�
 
 Подробная пошаговая инструкция для Windows 10: [docs/LOCAL_WINDOWS10.md](docs/LOCAL_WINDOWS10.md).
 
-## 🚀 Установка
-
 ### 1. Клонировать проект и создать окружение
 
 ```bash
