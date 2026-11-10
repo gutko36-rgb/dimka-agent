@@ -38,6 +38,23 @@ class FinancePlanningTests(unittest.TestCase):
         self.assertEqual(forecast.projected_balance, Decimal("60000.00"))
         self.assertEqual(len(forecast.events), 3)
 
+    def test_overdue_open_debt_is_counted_as_due_today(self):
+        forecast = forecast_balance(
+            transactions=[],
+            recurring_payments=[],
+            debts=[{
+                "counterparty": "Overdue",
+                "direction": "owed_by_me",
+                "amount_remaining": 1200,
+                "due_date": "2026-11-01",
+                "status": "open",
+            }],
+            as_of=date(2026, 11, 10),
+            horizon_days=7,
+        )
+        self.assertEqual(forecast.events[0].event_date, date(2026, 11, 10))
+        self.assertEqual(forecast.projected_balance, Decimal("-1200.00"))
+
     def test_month_end_payment_is_clamped_to_last_day(self):
         forecast = forecast_balance(
             transactions=[],
@@ -59,6 +76,13 @@ class FinancePlanningTests(unittest.TestCase):
         self.assertEqual(lines["Еда"].spent, Decimal("5500.00"))
         self.assertEqual(lines["Еда"].remaining, Decimal("-500.00"))
         self.assertEqual(lines["Транспорт"].spent, Decimal("0.00"))
+        zero_budget = {line.category: line for line in analyze_budget(
+            [{"kind": "expense", "amount": 10, "category": "Other", "tx_date": "2026-11-10"}],
+            {"Other": 0},
+            month=date(2026, 11, 1),
+        )}["Other"]
+        self.assertEqual(zero_budget.remaining, Decimal("-10.00"))
+        self.assertIsNone(zero_budget.utilization)
 
     def test_distribution_respects_user_weights_and_keeps_rounding_exact(self):
         plan = plan_distribution(
