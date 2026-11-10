@@ -3759,21 +3759,21 @@ async def prepare_project_action(update: Update, context: ContextTypes.DEFAULT_T
             task_input = {
                 "project": {
                     "id": project.get("id"),
-                    "title": project.get("title"),
+                    "title": str(project.get("title") or "")[:120],
                     "status": project.get("status"),
                     "deadline": project.get("deadline"),
-                    "goal": project.get("goal"),
-                    "description": project.get("description"),
-                    "result": project.get("result"),
+                    "goal": str(project.get("goal") or "")[:1000] or None,
+                    "description": str(project.get("description") or "")[:1000] or None,
+                    "result": str(project.get("result") or "")[:1000] or None,
                 },
                 "items": [
                     {
                         "id": item.get("id"),
                         "kind": item.get("kind"),
-                        "content": item.get("content"),
+                        "content": str(item.get("content") or "")[:1000],
                         "due_date": item.get("due_date"),
                         "done": item.get("done"),
-                        "created_at": item.get("created_at"),
+                        "created_at": str(item.get("created_at") or "")[:30],
                     }
                     for item in items[:500]
                 ],
