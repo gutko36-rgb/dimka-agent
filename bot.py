@@ -2139,6 +2139,7 @@ async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             .select("kind, amount, tx_date")
             .eq("telegram_id", user_id)
             .order("tx_date")
+            .limit(5000)
             .execute
         )
         payments = await fin_load_payments(user_id)
@@ -2162,7 +2163,7 @@ async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "amount": payment.get("amount"),
                         "day_of_month": payment.get("day_of_month"),
                     }
-                    for payment in payments
+                    for payment in payments[:500]
                 ],
                 "debts": [
                     {
@@ -2176,7 +2177,7 @@ async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "due_date": debt.get("due_date"),
                         "status": debt.get("status"),
                     }
-                    for debt in debts
+                    for debt in debts[:500]
                 ],
                 "as_of": today.isoformat(),
                 "horizon_days": 30,
