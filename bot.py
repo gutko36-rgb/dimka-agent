@@ -4874,7 +4874,9 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await message.reply_text("Аудиофайл больше 20 МБ. Отправь более короткое голосовое сообщение.")
         return
 
-    filename = getattr(media, "file_name", None) or "voice.ogg"
+    filename = getattr(media, "file_name", None) or ("voice.ogg" if message.voice else "audio.mp3")
+    if filename.lower().endswith(".oga"):
+        filename = filename[:-4] + ".ogg"
     try:
         telegram_file = await context.bot.get_file(media.file_id)
         audio_buffer = io.BytesIO()
