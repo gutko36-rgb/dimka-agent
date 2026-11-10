@@ -127,7 +127,8 @@ def render_habit_history(
         log_rows,
         key=lambda row: (
             str(row.get("log_date") or ""),
-            str(row.get("created_at") or row.get("id") or ""),
+            str(row.get("created_at") or ""),
+            int(row.get("id") or 0),
         ),
     )
     for row in ordered_logs:
