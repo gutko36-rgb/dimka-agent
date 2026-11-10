@@ -2606,14 +2606,38 @@ def deadline_phrase(iso: str | None, status: str, today: dt_date) -> str:
 
 # ---------- база ----------
 
-async def pj_create(user_id: int, title: str) -> dict:
+async def pj_create(
+    user_id: int, title: str, *, source_update_id: int | None = None
+) -> dict:
     await ensure_profile(user_id)
-    result = await db_call(
+    legacy_payload = {"telegram_id": user_id, "title": title}
+    if source_update_id is None:
+        result = await db_call(
+            supabase.table("agent_projects").insert(legacy_payload).execute
+        )
+        return result.data[0]
+
+    payload = {**legacy_payload, "source_update_id": source_update_id}
+    result = await idempotent_upsert(
+        "agent_projects",
+        payload,
+        "telegram_id,source_update_id",
+        legacy_payload,
+    )
+    if result.data:
+        return result.data[0]
+
+    existing = await db_call(
         supabase.table("agent_projects")
-        .insert({"telegram_id": user_id, "title": title})
+        .select("*")
+        .eq("telegram_id", user_id)
+        .eq("source_update_id", source_update_id)
+        .limit(1)
         .execute
     )
-    return result.data[0]
+    if existing.data:
+        return existing.data[0]
+    raise RuntimeError("Не удалось получить уже созданный проект")
 
 
 async def pj_get(user_id: int, project_id: int) -> dict | None:
@@ -2683,24 +2707,58 @@ async def pj_update(user_id: int, project_id: int, **fields) -> bool:
 
 
 async def pj_add_item(
-    user_id: int, project_id: int, kind: str, content: str, due: dt_date | None
+    user_id: int,
+    project_id: int,
+    kind: str,
+    content: str,
+    due: dt_date | None,
+    *,
+    source_update_id: int | None = None,
+    source_item_index: int = 0,
 ) -> dict:
     # Defense in depth: do not rely only on the caller having checked ownership.
     project = await pj_get(user_id, project_id)
     if not project:
         raise ValueError("Проект не найден или принадлежит другому пользователю")
-    result = await db_call(
+    legacy_payload = {
+        "telegram_id": user_id,
+        "project_id": project_id,
+        "kind": kind,
+        "content": content,
+        "due_date": due.isoformat() if due else None,
+    }
+    if source_update_id is None:
+        result = await db_call(
+            supabase.table("agent_project_items").insert(legacy_payload).execute
+        )
+        return result.data[0]
+
+    payload = {
+        **legacy_payload,
+        "source_update_id": source_update_id,
+        "source_item_index": source_item_index,
+    }
+    result = await idempotent_upsert(
+        "agent_project_items",
+        payload,
+        "telegram_id,source_update_id,source_item_index",
+        legacy_payload,
+    )
+    if result.data:
+        return result.data[0]
+
+    existing = await db_call(
         supabase.table("agent_project_items")
-        .insert({
-            "telegram_id": user_id,
-            "project_id": project_id,
-            "kind": kind,
-            "content": content,
-            "due_date": due.isoformat() if due else None,
-        })
+        .select("*")
+        .eq("telegram_id", user_id)
+        .eq("source_update_id", source_update_id)
+        .eq("source_item_index", source_item_index)
+        .limit(1)
         .execute
     )
-    return result.data[0]
+    if existing.data:
+        return existing.data[0]
+    raise RuntimeError("Не удалось получить уже созданную запись проекта")
 
 
 async def pj_item_get(user_id: int, item_id: int) -> dict | None:
@@ -2804,7 +2862,7 @@ async def project_new_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     try:
-        project = await pj_create(update.effective_user.id, title)
+        project = await pj_create(update.effective_user.id, title, source_update_id=update.update_id)
     except Exception:
         logging.exception("Не удалось создать проект")
         await update.effective_message.reply_text(PJ_SQL_HINT, reply_markup=MAIN_MENU)
@@ -3140,7 +3198,7 @@ async def pj_item_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "Не нашёл проект с таким номером. Список: /projects", reply_markup=MAIN_MENU
             )
             return
-        item = await pj_add_item(user_id, project["id"], kind, content, due)
+        item = await pj_add_item(user_id, project["id"], kind, content, due, source_update_id=update.update_id)
     except Exception:
         logging.exception("Не удалось добавить запись в проект")
         await update.effective_message.reply_text(PJ_SQL_HINT, reply_markup=MAIN_MENU)
@@ -3403,8 +3461,16 @@ async def plan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        for stage in plan["stages"]:
-            await pj_add_item(user_id, plan["project_id"], "stage", stage, None)
+        for item_index, stage in enumerate(plan["stages"]):
+            await pj_add_item(
+                user_id,
+                plan["project_id"],
+                "stage",
+                stage,
+                None,
+                source_update_id=update.update_id,
+                source_item_index=item_index,
+            )
     except Exception:
         logging.exception("Не удалось сохранить этапы плана")
         await query.answer("Не удалось сохранить. Подробности в консоли.", show_alert=True)
@@ -3577,7 +3643,7 @@ async def project_action_callback(update: Update, context: ContextTypes.DEFAULT_
             current = await pj_list(user_id)
             if any(p["title"].casefold().strip() == draft["title"].casefold().strip() for p in current):
                 raise ValueError("Такой проект уже существует")
-            project = await pj_create(user_id, draft["title"])
+            project = await pj_create(user_id, draft["title"], source_update_id=update.update_id)
             fields = {}
             if draft.get("description"):
                 fields["description"] = draft["description"]
@@ -3593,7 +3659,12 @@ async def project_action_callback(update: Update, context: ContextTypes.DEFAULT_
                 raise ValueError("Проект не найден или недоступен")
             item_kind = kind.removeprefix("add_")
             item = await pj_add_item(
-                user_id, project["id"], item_kind, draft["content"], draft.get("due_date")
+                user_id,
+                project["id"],
+                item_kind,
+                draft["content"],
+                draft.get("due_date"),
+                source_update_id=update.update_id,
             )
             result_text = f"Добавлено в «{project['title']}»: запись №{item['id']}."
             open_id = project["id"]
