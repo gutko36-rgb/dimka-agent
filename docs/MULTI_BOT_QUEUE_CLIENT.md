@@ -15,7 +15,7 @@ BotQueueClient должен получать Supabase client, аутентифи
 - enqueue(...) — создаёт задачу/событие с sender ID из BotIdentity, адресатом, типом, JSON payload и idempotency key.
 - claim_inbox(limit=20, lease_seconds=300) — атомарно забирает доступные сообщения через RPC `claim_bot_messages`; параллельные workers не получают одну запись. Если worker упал, просроченная аренда позволяет повторить попытку; после `max_attempts` сообщение переводится в `failed`.
 - fetch_inbox(limit=20) — только диагностическое чтение pending-сообщений; не использовать как механизм выдачи работы нескольким workers.
-- update_status(...) — обновляет статус и processing metadata только для сообщения, адресованного этому боту.
+- update_status(...) — переводит уже захваченное сообщение из `processing` в конечный статус (`completed`, `failed`, `cancelled`) и только если оно адресовано этому боту.
 
 Дублирование (from_bot_id, idempotency_key), проверка активности адресата и ограничения RLS обеспечиваются схемой БД, а не этим модулем.
 
@@ -31,10 +31,11 @@ BotQueueClient должен получать Supabase client, аутентифи
 
 Из корня репозитория после переключения на ветку PR:
 
-    python -m py_compile bot_queue.py
+    python -m py_compile bot_queue.py bot_worker.py
     python -m unittest discover -s tests -p "test_bot_queue.py" -v
+    python -m unittest discover -s tests -p "test_bot_worker.py" -v
 
-Ожидаемый результат: 10 tests ... OK. Это не запускает Telegram и не меняет Supabase.
+Ожидаемый результат: 13 тестов клиента и 9 тестов worker проходят. Эти команды не запускают Telegram и не меняют Supabase.
 
 ## Универсальный worker
 
