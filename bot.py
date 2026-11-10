@@ -294,6 +294,40 @@ async def db_call(method, *args, **kwargs):
     return await asyncio.to_thread(lambda: method(*args, **kwargs))
 
 
+
+def is_missing_idempotency_schema_error(error: Exception) -> bool:
+    """True only when an idempotency column/index has not been deployed yet."""
+    code = getattr(error, "code", None)
+    message = str(error).lower()
+    return (
+        code in {"PGRST204", "42703", "42P10"}
+        or "could not find the" in message and "column" in message
+        or "no unique or exclusion constraint matching the on conflict" in message
+    )
+
+
+async def idempotent_upsert(
+    table: str,
+    payload: dict,
+    on_conflict: str,
+    legacy_payload: dict,
+):
+    """Use the new unique key; temporarily preserve old behavior before its SQL is deployed."""
+    try:
+        return await db_call(
+            supabase.table(table)
+            .upsert(payload, on_conflict=on_conflict, ignore_duplicates=True)
+            .execute
+        )
+    except Exception as error:
+        if not is_missing_idempotency_schema_error(error):
+            raise
+        logging.warning(
+            "Idempotency schema for %s is not deployed yet; using compatibility insert",
+            table,
+        )
+        return await db_call(supabase.table(table).insert(legacy_payload).execute)
+
 async def ensure_profile(telegram_id: int, name: str | None = None) -> None:
     row = {"telegram_id": telegram_id}
     if name:
