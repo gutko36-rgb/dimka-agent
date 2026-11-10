@@ -20,7 +20,16 @@ class TelegramWriteIdempotencyPostgresTests(unittest.TestCase):
     def setUpClass(cls):
         with psycopg.connect(DATABASE_URL) as conn:
             conn.execute((ROOT / "tests/sql/telegram_idempotency_schema_stub.sql").read_text(encoding="utf-8"))
-            conn.execute((ROOT / "docs/sql/TELEGRAM_WRITE_IDEMPOTENCY_PROPOSAL.sql").read_text(encoding="utf-8"))
+            migration_paths = (
+                "supabase/migrations/20261109170507_finance_project_link_and_idempotency.sql",
+                "supabase/migrations/20261109170516_finance_multi_item_idempotency.sql",
+                "supabase/migrations/20261109172848_finance_pending_confirmation_actions.sql",
+                "supabase/migrations/20261109173659_project_material_attachments.sql",
+                "supabase/migrations/20261109173851_project_asset_dedup_per_project.sql",
+                "supabase/migrations/20261110120000_telegram_write_idempotency.sql",
+            )
+            for migration_path in migration_paths:
+                conn.execute((ROOT / migration_path).read_text(encoding="utf-8"))
 
     def setUp(self):
         tables = (
@@ -31,6 +40,34 @@ class TelegramWriteIdempotencyPostgresTests(unittest.TestCase):
         with psycopg.connect(DATABASE_URL) as conn:
             for table in tables:
                 conn.execute(f"DELETE FROM public.{table}")
+
+    def test_migrations_add_source_tracking_columns(self):
+        with psycopg.connect(DATABASE_URL) as conn:
+            rows = conn.execute(
+                """
+                SELECT table_name, column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND (column_name IN ('source_update_id', 'source_item_index')
+                       OR column_name = 'last_answer_update_id')
+                  AND table_name IN (
+                      'conversations', 'finance_payments', 'finance_purchases',
+                      'agent_projects', 'agent_project_items', 'daily_surveys'
+                  )
+                """
+            ).fetchall()
+        columns = {(row[0], row[1]) for row in rows}
+        expected = {
+            ("conversations", "source_update_id"),
+            ("conversations", "source_item_index"),
+            ("finance_payments", "source_update_id"),
+            ("finance_purchases", "source_update_id"),
+            ("agent_projects", "source_update_id"),
+            ("agent_project_items", "source_update_id"),
+            ("agent_project_items", "source_item_index"),
+            ("daily_surveys", "last_answer_update_id"),
+        }
+        self.assertTrue(expected.issubset(columns))
 
     def test_conversation_update_role_keys_are_unique_and_nulls_remain_allowed(self):
         with psycopg.connect(DATABASE_URL) as conn:
