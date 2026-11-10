@@ -14,12 +14,30 @@ from bot_identity import BotIdentity
 from bot_queue import BotQueueClient
 
 
+def admin_credentials(environ: dict[str, str]) -> tuple[str, str]:
+    url = str(environ.get("SUPABASE_URL", "")).strip()
+    service_key = str(
+        environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+        or environ.get("SUPABASE_KEY", "")
+    ).strip()
+    return url, service_key
+
+
 def main() -> int:
-    url = os.environ.get("SUPABASE_URL", "").strip()
-    service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(".env", override=False)
+    except ImportError:
+        pass
+
+    url, service_key = admin_credentials(os.environ)
     worker_id = os.environ.get("SMOKE_TEST_WORKER_ID", "finance").strip().lower()
     if not url or not service_key:
-        print("Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on this trusted admin machine.", file=sys.stderr)
+        print(
+            "Set SUPABASE_URL and the server-side SUPABASE_KEY "
+            "(or SUPABASE_SERVICE_ROLE_KEY) in the project .env file.",
+            file=sys.stderr,
+        )
         return 2
 
     try:
