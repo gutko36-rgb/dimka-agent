@@ -118,6 +118,26 @@ class ProvisionBotIdentityTests(unittest.TestCase):
         self.assertIsNone(client.registry)
         self.assertNotIn(("update", {"is_active": True}, [("bot_id", "finance")]), client.calls)
 
+    def test_admin_credentials_accepts_server_side_legacy_key(self):
+        from scripts.provision_bot_identity import admin_credentials
+
+        url, key = admin_credentials({
+            "SUPABASE_URL": " https://project.supabase.co ",
+            "SUPABASE_KEY": " server-secret ",
+        })
+        self.assertEqual(url, "https://project.supabase.co")
+        self.assertEqual(key, "server-secret")
+
+    def test_admin_credentials_prefers_explicit_service_role_key(self):
+        from scripts.provision_bot_identity import admin_credentials
+
+        _url, key = admin_credentials({
+            "SUPABASE_URL": "https://project.supabase.co",
+            "SUPABASE_KEY": "legacy-key",
+            "SUPABASE_SERVICE_ROLE_KEY": "service-role-key",
+        })
+        self.assertEqual(key, "service-role-key")
+
     def test_rejects_short_password(self):
         client = FakeClient()
         args = self.kwargs()
