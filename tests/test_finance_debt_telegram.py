@@ -137,7 +137,7 @@ class FinanceDebtTelegramTests(unittest.IsolatedAsyncioTestCase):
     async def test_confirm_creates_debt_once_and_clears_draft(self):
         self.context.args = ["owed_by_me", "|", "10000", "|", "Банк", "|", "Кредит"]
         await self.handlers["debt_add"](self.update, self.context)
-        query = FakeQuery("debt:confirm")
+        query = FakeQuery("debt:confirm:" + self.context.user_data["finance_debt_pending"]["draft_id"])
         callback_update = SimpleNamespace(
             effective_user=self.user,
             effective_message=self.message,
@@ -151,10 +151,36 @@ class FinanceDebtTelegramTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("finance_debt_pending", self.context.user_data)
         self.assertIn("Долг сохранён", query.edits[-1][0])
 
+    async def test_old_confirmation_button_cannot_confirm_a_newer_draft(self):
+        self.context.args = ["owed_by_me", "|", "10000", "|", "Банк", "|", "Кредит"]
+        await self.handlers["debt_add"](self.update, self.context)
+        old_token = self.context.user_data["finance_debt_pending"]["draft_id"]
+
+        self.context.args = ["owed_to_me", "|", "5000", "|", "Алексей", "|", "Материалы"]
+        self.update.update_id = 9002
+        await self.handlers["debt_add"](self.update, self.context)
+        new_token = self.context.user_data["finance_debt_pending"]["draft_id"]
+        self.assertNotEqual(old_token, new_token)
+
+        query = FakeQuery("debt:confirm:" + old_token)
+        callback_update = SimpleNamespace(
+            effective_user=self.user,
+            effective_message=self.message,
+            callback_query=query,
+        )
+        await self.handlers["callback"](callback_update, self.context)
+
+        self.assertFalse(any(call[0] == "create_debt" for call in self.store.calls))
+        self.assertEqual(
+            self.context.user_data["finance_debt_pending"]["draft_id"],
+            new_token,
+        )
+        self.assertIn("устаревшему черновику", query.edits[-1][0])
+
     async def test_cancel_does_not_write(self):
         self.context.args = ["owed_by_me", "|", "10000", "|", "Банк", "|", "Кредит"]
         await self.handlers["debt_add"](self.update, self.context)
-        query = FakeQuery("debt:cancel")
+        query = FakeQuery("debt:cancel:" + self.context.user_data["finance_debt_pending"]["draft_id"])
         callback_update = SimpleNamespace(
             effective_user=self.user,
             effective_message=self.message,
@@ -175,7 +201,7 @@ class FinanceDebtTelegramTests(unittest.IsolatedAsyncioTestCase):
     async def test_confirmed_debt_payment_uses_original_update_id(self):
         self.context.args = ["3", "|", "2500"]
         await self.handlers["debt_pay"](self.update, self.context)
-        query = FakeQuery("debt:confirm")
+        query = FakeQuery("debt:confirm:" + self.context.user_data["finance_debt_pending"]["draft_id"])
         callback_update = SimpleNamespace(
             effective_user=self.user,
             effective_message=self.message,
@@ -194,7 +220,7 @@ class FinanceDebtTelegramTests(unittest.IsolatedAsyncioTestCase):
         self.context.args = ["Еда", "|", "20000"]
         await self.handlers["budget_set"](self.update, self.context)
         self.assertFalse(any(call[0] == "set_budget" for call in self.store.calls))
-        query = FakeQuery("debt:confirm")
+        query = FakeQuery("debt:confirm:" + self.context.user_data["finance_debt_pending"]["draft_id"])
         callback_update = SimpleNamespace(
             effective_user=self.user,
             effective_message=self.message,
