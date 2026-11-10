@@ -15,6 +15,7 @@ from groq import AsyncGroq
 from finance_agent import parse_finance_response
 from project_agent import parse_project_response
 from intent_dispatcher import dispatch_intent
+from bot_result_inbox import BotResultInbox, format_result_message
 from finance_planning import forecast_balance
 from finance_debt import FinanceDebtStore
 from finance_debt_telegram import build_finance_debt_handlers
@@ -5788,6 +5789,33 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     logging.error("Необработанная ошибка Telegram handler", exc_info=context.error)
 
 
+async def poll_bot_results_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Deliver claimed worker results to the owner's Telegram chat."""
+    inbox = context.application.bot_data.get("bot_result_inbox")
+    if inbox is None:
+        return
+    try:
+        messages = await asyncio.to_thread(inbox.claim)
+    except Exception:
+        logging.exception("Не удалось получить результаты внутренних агентов")
+        return
+
+    for item in messages:
+        try:
+            message_id = item.get("id")
+            if not isinstance(message_id, str) or not message_id:
+                raise ValueError("Result message has no id")
+            text = format_result_message(item)
+            await send_long(context.bot, ALLOWED_TELEGRAM_USER_ID, text)
+            completed = await asyncio.to_thread(inbox.complete, message_id)
+            if not completed:
+                logging.warning("Результат %s отправлен, но статус не обновлён", message_id)
+        except Exception:
+            # Keep the processing lease; the RPC makes the result eligible again
+            # after lease expiry, avoiding silent loss on transient Telegram errors.
+            logging.exception("Не удалось доставить результат внутреннего агента")
+
+
 async def post_init(app: Application) -> None:
     """Выполняется один раз при запуске: список команд и расписание опросов."""
     await app.bot.set_my_commands([
@@ -5860,6 +5888,18 @@ async def post_init(app: Application) -> None:
         logging.exception(
             "Не удалось запустить расписание опросов. Проверь, что SQL для этапа 4 выполнен."
         )
+
+    if app.job_queue is None:
+        logging.warning("Получение результатов внутренних агентов отключено: JobQueue недоступен")
+    else:
+        app.bot_data["bot_result_inbox"] = BotResultInbox(supabase)
+        app.job_queue.run_repeating(
+            poll_bot_results_job,
+            interval=5,
+            first=5,
+            name="bot_result_inbox",
+        )
+        logging.info("Получение результатов внутренних агентов назначено: интервал 5 секунд")
 
 
 def main():
