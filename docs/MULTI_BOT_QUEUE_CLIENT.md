@@ -31,6 +31,6 @@ BotQueueClient должен получать Supabase client, аутентифи
 Из корня репозитория после переключения на ветку PR:
 
     python -m py_compile bot_queue.py
-    python -m unittest tests.test_bot_queue -v
+    python -m unittest discover -s tests -p "test_bot_queue.py" -v
 
 Ожидаемый результат: 10 tests ... OK. Это не запускает Telegram и не меняет Supabase.
