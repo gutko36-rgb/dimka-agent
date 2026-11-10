@@ -169,12 +169,52 @@ class BotWorker:
         return task_type.strip(), task_input, sender, message_id, task_id, hop_count
 
     def _mark_failed(self, message: dict[str, Any], reason: str) -> bool:
-        message_id = message.get("id") if isinstance(message, dict) else None
+        if not isinstance(message, dict):
+            return False
+        message_id = message.get("id")
         if not isinstance(message_id, str) or not message_id.strip():
             return False
         try:
+            normalized_message_id = str(UUID(message_id))
+        except (TypeError, ValueError, AttributeError):
+            return False
+
+        # Send a small, allowlisted failure code back to the sender. Never include
+        # exception text, input contents, credentials, or stack traces in results.
+        task_id = message.get("task_id")
+        sender = message.get("from_bot_id")
+        if isinstance(sender, str) and sender.strip():
+            try:
+                normalized_task_id = str(UUID(str(task_id)))
+                raw_hop_count = message.get("hop_count", 0)
+                hop_count = (
+                    raw_hop_count
+                    if isinstance(raw_hop_count, int) and not isinstance(raw_hop_count, bool)
+                    else 0
+                )
+                payload = message.get("payload")
+                task_type = payload.get("task_type", "unknown") if isinstance(payload, dict) else "unknown"
+                if not isinstance(task_type, str):
+                    task_type = "unknown"
+                self.queue.enqueue(
+                    to_bot_id=sender,
+                    message_type="result",
+                    payload={"task_type": task_type[:80], "ok": False, "error": reason},
+                    idempotency_key=f"result:{normalized_message_id}",
+                    task_id=normalized_task_id,
+                    parent_message_id=normalized_message_id,
+                    hop_count=min(max(hop_count + 1, 0), MAX_HOP_COUNT),
+                )
+            except (TypeError, ValueError, AttributeError):
+                # Malformed routing metadata: mark the task failed without replying.
+                pass
+            except Exception:
+                # Do not mark terminal until the idempotent failure result is queued.
+                return False
+
+        try:
             updated = self.queue.update_status(
-                message_id=message_id,
+                message_id=normalized_message_id,
                 status="failed",
                 last_error=reason,
             )
