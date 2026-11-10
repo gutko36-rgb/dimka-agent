@@ -63,9 +63,10 @@ def create_authenticated_queue(
 
 
 def build_worker(queue: BotQueueClient) -> BotWorker:
-    """Build the isolated worker with diagnostics and pure finance calculations."""
+    """Build only the handlers explicitly allowed for this worker identity."""
     handlers = {"diagnostics.echo": lambda payload: {"echo": payload}}
-    handlers.update(build_finance_handlers())
+    if queue.identity.bot_id == "finance":
+        handlers.update(build_finance_handlers())
     return BotWorker(
         queue,
         handlers,
