@@ -138,7 +138,11 @@ def format_result_message(message: dict[str, Any]) -> str:
                 return formatted
         heading = f"Результат от {title}"
     else:
-        body = {"error": payload.get("error", "worker_failed")}
+        error_code = payload.get("error", "worker_failed")
+        if sender == "finance":
+            safe_code = str(error_code)[:80]
+            return f"⚠️ Финансовый агент не смог обработать запрос.\nКод ошибки: {safe_code}"
+        body = {"error": error_code}
         heading = f"Не удалось выполнить задачу у {title}"
     rendered = json.dumps(body, ensure_ascii=False, indent=2, default=str)
     return f"📨 {heading}\nЗадача: {task_type}\n\n{rendered}"
