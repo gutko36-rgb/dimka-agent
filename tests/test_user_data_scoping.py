@@ -140,7 +140,7 @@ class UserDataScopingTests(unittest.IsolatedAsyncioTestCase):
             await bot.forecast_command(update, None)
 
         self.assert_every_query_is_owner_scoped(42)
-        self.assertIn("Будущие доходы и долги пока не подключены", captured["text"])
+        self.assertIn("Учёт долгов пока выключен", captured["text"])
 
     async def test_project_item_insert_refuses_project_not_owned_by_user(self):
         async def no_project(_user_id, _project_id):
