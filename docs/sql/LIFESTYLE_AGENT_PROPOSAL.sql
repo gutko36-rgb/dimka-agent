@@ -70,7 +70,7 @@ create table if not exists public.lifestyle_habit_logs (
     log_date date not null default current_date,
     status text not null check (status in ('done', 'skipped')),
     note text null check (note is null or length(note) <= 1000),
-    source_update_id bigint not null,
+    source_update_id bigint not null check (source_update_id > 0),
     created_at timestamptz not null default now(),
     constraint lifestyle_habit_logs_owner_source_unique unique (telegram_id, source_update_id),
     constraint lifestyle_habit_logs_habit_owner_fk
