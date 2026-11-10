@@ -35,6 +35,11 @@ def project_summary(payload: dict[str, Any]) -> dict[str, Any]:
     title = _text(project.get("title"), "project.title", limit=120)
     if not title:
         raise ValueError("project.title is required")
+    project_id = project.get("id")
+    if project_id is not None and (
+        not isinstance(project_id, int) or isinstance(project_id, bool) or project_id <= 0
+    ):
+        raise ValueError("project.id must be a positive integer")
     status = str(project.get("status") or "").strip().lower()
     if status not in {"idea", "active", "paused", "done"}:
         raise ValueError("project.status is invalid")
@@ -60,12 +65,17 @@ def project_summary(payload: dict[str, Any]) -> dict[str, Any]:
         content = _text(row.get("content"), "item.content", limit=1000)
         if not content:
             raise ValueError("project item content is required")
+        item_id = row.get("id")
+        if item_id is not None and (
+            not isinstance(item_id, int) or isinstance(item_id, bool) or item_id <= 0
+        ):
+            raise ValueError("item.id must be a positive integer")
         done = row.get("done", False)
         if not isinstance(done, bool):
             raise ValueError("item.done must be boolean")
         due_date = _as_date(row["due_date"], "item.due_date") if row.get("due_date") else None
         item = {
-            "id": row.get("id"),
+            "id": item_id,
             "kind": kind,
             "content": content,
             "due_date": due_date.isoformat() if due_date else None,
@@ -94,7 +104,7 @@ def project_summary(payload: dict[str, Any]) -> dict[str, Any]:
     upcoming.sort(key=lambda item: (item["due_date"], item["kind"], item["id"] or 0))
 
     return {
-        "project_id": project.get("id"),
+        "project_id": project_id,
         "title": title,
         "status": status,
         "deadline": deadline.isoformat() if deadline else None,
