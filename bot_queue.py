@@ -15,7 +15,6 @@ from bot_identity import BotIdentity
 
 BOT_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 MESSAGE_TYPES = {"task", "result", "status", "event", "approval_request"}
-MESSAGE_STATUSES = {"pending", "processing", "completed", "failed", "cancelled"}
 MAX_HOP_COUNT = 8
 
 
@@ -62,7 +61,7 @@ class BotQueueClient:
         available_at: datetime | None = None,
         expires_at: datetime | None = None,
     ) -> dict[str, Any] | None:
-        """Create one message; DB rejects duplicate sender/key pairs."""
+        """Create one message; duplicate sender/key pairs are ignored safely."""
         if not isinstance(to_bot_id, str):
             raise BotQueueValidationError("to_bot_id must be a string")
         recipient = to_bot_id.strip().lower()
@@ -174,7 +173,7 @@ class BotQueueClient:
         status: str,
         last_error: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Update processing metadata only for a message addressed to this bot."""
+        """Set a terminal status only for a currently claimed message addressed to this bot."""
         if not isinstance(status, str) or status not in {"completed", "failed", "cancelled"}:
             raise BotQueueValidationError("Only terminal statuses can be set directly; claim_inbox() sets processing")
         if not isinstance(message_id, str) or not message_id.strip():
@@ -182,8 +181,6 @@ class BotQueueClient:
 
         now = _iso(_utc_now())
         update: dict[str, Any] = {"status": status}
-        if status == "processing":
-            update["claimed_at"] = now
         if status in {"completed", "failed", "cancelled"}:
             update["completed_at"] = now
         if last_error is not None:
