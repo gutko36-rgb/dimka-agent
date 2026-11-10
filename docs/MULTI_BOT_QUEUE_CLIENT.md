@@ -13,9 +13,9 @@ BotQueueClient должен получать Supabase client, аутентифи
 ## Методы
 
 - enqueue(...) — создаёт задачу/событие с sender ID из BotIdentity, адресатом, типом, JSON payload и idempotency key.
-- claim_inbox(limit=20, lease_seconds=300) — атомарно забирает доступные сообщения через RPC `claim_bot_messages`; параллельные workers не получают одну запись. Если worker упал, просроченная аренда позволяет повторить попытку; после `max_attempts` сообщение переводится в `failed`.
+- claim_inbox(limit=20, lease_seconds=300, message_type="task") — атомарно забирает сообщения выбранного типа через RPC `claim_bot_messages`; по умолчанию worker получает только `task`, главный бот может отдельно забирать `result`. Параллельные workers не получают одну запись. Если worker упал, просроченная аренда позволяет повторить попытку; после `max_attempts` сообщение переводится в `failed`.
 - fetch_inbox(limit=20) — только диагностическое чтение pending-сообщений; не использовать как механизм выдачи работы нескольким workers.
-- update_status(...) — обновляет статус и processing metadata только для сообщения, адресованного этому боту.
+- update_status(...) — переводит уже захваченное сообщение из `processing` в конечный статус (`completed`, `failed`, `cancelled`) и только если оно адресовано этому боту.
 
 Дублирование (from_bot_id, idempotency_key), проверка активности адресата и ограничения RLS обеспечиваются схемой БД, а не этим модулем.
 
@@ -24,14 +24,29 @@ BotQueueClient должен получать Supabase client, аутентифи
 - SQL из docs/sql/MULTI_BOT_QUEUE_PROPOSAL.sql ещё не применён в Supabase. Для новых таблиц `public` после 30 октября 2026 явные GRANT обязательны для доступа через Data API; proposal выдаёт только минимальные права `authenticated` и административные права `service_role`, не выдавая доступ `anon`.
 - Модуль не подключён к bot.py и не выполняет polling.
 - SQL proposal теперь содержит атомарную RPC-функцию `claim_bot_messages` с `FOR UPDATE SKIP LOCKED`, арендой (lease) и ограничением повторов. Её нужно проверить на тестовой PostgreSQL/Supabase среде до production-применения.
-- Нет второго Telegram-бота, токенов или Auth identities.
-- Unit tests используют поддельный Supabase-клиент для проверки Python-запросов. Отдельные CI integration tests применяют SQL proposal к настоящему PostgreSQL 17 и проверяют RLS, подмену отправителя, параллельный claim и повтор после истечения lease. Тестовый `auth.jwt()` — shim; это ещё не проверка реального Supabase Auth, подписанных JWT или настроек Data API.
+- Пока не созданы отдельные Supabase Auth identities/JWT для внутренних workers. Отдельные Telegram-токены не нужны: Telegram-интерфейс остаётся у главного Димки.
+- Unit tests используют поддельный Supabase-клиент для проверки Python-запросов. Отдельные CI integration tests применяют SQL proposal к настоящему PostgreSQL 17 и проверяют RLS, подмену отправителя, запрет anon, выбор типа сообщения, параллельный claim и повтор после истечения lease. Тестовый `auth.jwt()` — shim; это ещё не проверка реального Supabase Auth, подписанных JWT или настроек Data API.
 
 ## Локальная проверка на Windows
 
 Из корня репозитория после переключения на ветку PR:
 
-    python -m py_compile bot_queue.py
+    python -m py_compile bot_queue.py bot_worker.py
     python -m unittest discover -s tests -p "test_bot_queue.py" -v
+    python -m unittest discover -s tests -p "test_bot_worker.py" -v
 
-Ожидаемый результат: 10 tests ... OK. Это не запускает Telegram и не меняет Supabase.
+Ожидаемый результат: 13 тестов клиента и 9 тестов worker проходят. Эти команды не запускают Telegram и не меняют Supabase.
+
+## Универсальный worker
+
+Файл `bot_worker.py` содержит общий исполнитель задач. Он:
+- атомарно забирает задачи через `claim_inbox()`;
+- выбирает обработчик по `payload.task_type`;
+- передаёт ему только объект `payload.input`;
+- отправляет результат отправителю как отдельное `result`-сообщение;
+- использует детерминированный idempotency key для результата;
+- не повторяет внешние действия и не подтверждает операции за владельца.
+
+Обработчики должны быть чистыми вычислениями: без записи финансовых операций, изменения Todoist, отправки сообщений или иных внешних побочных эффектов. Такие действия должны возвращаться главному Димке как предложение и проходить подтверждение владельца. Ошибки доставки оставляют задачу в processing до истечения lease, после чего она может быть повторена.
+
+Модуль не запускается автоматически и пока не подключён к `bot.py`. Для реального worker-процесса нужна отдельная Supabase Auth identity/JWT. Telegram token worker не нужен: все сообщения пользователя принимает главный Димка.
