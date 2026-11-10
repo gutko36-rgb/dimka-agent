@@ -50,3 +50,61 @@ BotQueueClient должен получать Supabase client, аутентифи
 Обработчики должны быть чистыми вычислениями: без записи финансовых операций, изменения Todoist, отправки сообщений или иных внешних побочных эффектов. Такие действия должны возвращаться главному Димке как предложение и проходить подтверждение владельца. Ошибки доставки оставляют задачу в processing до истечения lease, после чего она может быть повторена.
 
 Модуль не запускается автоматически и пока не подключён к `bot.py`. Для реального worker-процесса нужна отдельная Supabase Auth identity/JWT. Telegram token worker не нужен: все сообщения пользователя принимает главный Димка.
+
+
+## Развёртывание первого изолированного worker
+
+Схема очереди уже применена в Supabase. Перед запуском worker нужно создать ему отдельную Auth identity. Делать это следует на доверенной административной машине, где доступен service-role key:
+
+```powershell
+$env:SUPABASE_URL="https://<project-ref>.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY="<service-role-key>"
+python scripts/provision_bot_identity.py --bot-id finance --role finance --display-name "Финансовый агент" --email finance-worker@example.com
+```
+
+Скрипт:
+- создаёт запись реестра сначала неактивной;
+- создаёт Supabase Auth user с доверенным `app_metadata.bot_id=finance`;
+- активирует запись только после успешного создания пользователя;
+- генерирует отдельный случайный пароль и показывает его один раз;
+- не записывает service-role key в worker и не меняет существующего пользователя.
+
+Скопируй выведенные `BOT_AUTH_EMAIL` и `BOT_AUTH_PASSWORD` в приватный `.env` на отдельной машине worker. Там должны быть:
+
+```env
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_ANON_KEY=<publishable-or-anon-key>
+BOT_ID=finance
+BOT_ROLE=finance
+BOT_DISPLAY_NAME=Финансовый агент
+BOT_AUTH_EMAIL=finance-worker@example.com
+BOT_AUTH_PASSWORD=<generated-password>
+BOT_WORKER_BATCH_SIZE=10
+```
+
+**На worker-машине не должно быть `SUPABASE_KEY` или service-role key.** Процесс входит через Supabase Auth и перед созданием клиента очереди проверяет, что доверенный `app_metadata.bot_id` совпадает с `BOT_ID`.
+
+Для запуска одного пакета:
+
+```powershell
+python bot_worker_service.py --once
+```
+
+Для постоянной обработки:
+
+```powershell
+python bot_worker_service.py
+```
+
+Чтобы проверить полный обмен, оставь worker запущенным и на доверенной административной машине выполни:
+
+```powershell
+$env:SUPABASE_URL="https://<project-ref>.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY="<service-role-key>"
+$env:SMOKE_TEST_WORKER_ID="finance"
+python scripts/smoke_test_worker.py
+```
+
+Скрипт отправляет задачу от `dimka`, ждёт ответ worker до 90 секунд и проверяет, что результат вернулся в очередь. Service-role key используется только на доверенной машине для smoke test.
+
+Пока зарегистрирован только безопасный smoke-test обработчик `diagnostics.echo`. Он подтверждает аутентификацию, RLS, доставку задачи, возврат результата и завершение сообщения, но не выполняет финансовые операции и не читает пользовательские таблицы. Финансовые и проектные обработчики будут подключаться отдельно после проверки их owner-scoping и прав доступа.
