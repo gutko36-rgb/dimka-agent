@@ -1,16 +1,8 @@
--- REVIEW DRAFT ONLY — NOT A SUPABASE MIGRATION.
--- This file is intentionally stored under docs/sql so it cannot be applied
--- automatically by the Supabase migration runner.
---
--- Before converting this draft into a migration:
--- 1. Provision a distinct Supabase Auth identity for each bot.
--- 2. Set app_metadata.bot_id through a trusted admin process (never user_metadata).
--- 3. Give each bot its own short-lived/refreshed authenticated JWT.
--- 4. Do NOT distribute the Supabase service_role key to individual bots.
--- 5. Review this SQL and test it on a disposable Supabase project.
---
--- The migration creates only additive objects. It does not alter existing
--- DIMKA tables, existing user data, Telegram polling, or bot runtime.
+-- Historical review source for the applied migration.
+-- Canonical migration: supabase/migrations/20261110035645_multi_bot_queue.sql
+-- Applied to the connected Supabase project on 2026-11-10.
+-- Specialized workers still require separate Auth identities/JWTs.
+-- Never distribute the Supabase service_role key to specialized workers.
 
 begin;
 
