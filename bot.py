@@ -16,6 +16,8 @@ from finance_agent import parse_finance_response
 from project_agent import parse_project_response
 from intent_dispatcher import dispatch_intent
 from finance_planning import forecast_balance
+from finance_debt import FinanceDebtStore
+from finance_debt_telegram import build_finance_debt_handlers
 from project_documents import build_project_timeline, extract_document_text, search_document_text
 from supabase import create_client, Client
 
@@ -45,6 +47,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 # Токен Todoist необязателен: без него бот работает, просто не видит задачи.
 TODOIST_TOKEN = os.getenv("TODOIST_API_TOKEN")
+FINANCE_DEBT_ENABLED = os.getenv("FINANCE_DEBT_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 if not TELEGRAM_TOKEN or not GROQ_API_KEY or not GROQ_MODEL:
     raise RuntimeError("Не заполнены TELEGRAM_BOT_TOKEN, GROQ_API_KEY или GROQ_MODEL в .env")
@@ -245,6 +248,11 @@ HELP_TEXT = (
     "/income 50000 зарплата — записать доход\n"
     "/finance или /finance week — итоги за месяц или неделю\n"
     "/forecast или /finance forecast — прогноз остатка на 30 дней\n"
+    "/debts — открытые долги; /debt_add направление | сумма | кому | за что | срок|-",
+    "/debt_pay ID | сумма — погасить долг после подтверждения",
+    "/budgets — лимиты и расходы за месяц; /budget_set категория | лимит",
+    "/budget_weights — веса; /budget_weight категория | вес",
+    "/allocate доход | обязательные расходы | долги | накопления — черновик распределения"
     "/fin_list — последние записи, /fin_del номер — удалить\n"
     "/payment 15000 5 Аренда — платёж каждый месяц 5-го числа\n"
     "/payments — список платежей, /payment_del номер — удалить\n"
@@ -2109,10 +2117,14 @@ async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             .execute
         )
         payments = await fin_load_payments(user_id)
+        debts = (
+            await FinanceDebtStore(supabase, db_call).list_debts(user_id)
+            if FINANCE_DEBT_ENABLED else []
+        )
         forecast = forecast_balance(
             tx_result.data or [],
             payments,
-            debts=[],
+            debts=debts,
             as_of=today,
             horizon_days=30,
         )
@@ -2137,11 +2149,17 @@ async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     else:
         lines += ["", "В ближайшие 30 дней известных регулярных платежей нет."]
+    undated_debts = [debt for debt in debts if not debt.get("due_date")]
     lines += [
         "",
-        "Важно: прогноз учитывает только уже записанные доходы/расходы и обязательные регулярные платежи.",
-        "Будущие доходы и долги пока не подключены, поэтому это консервативная оценка, а не обещание остатка.",
+        "Важно: будущие доходы не предполагаются. Прогноз — оценка по сохранённым данным, а не обещание остатка.",
     ]
+    if FINANCE_DEBT_ENABLED:
+        lines.append("Открытые долги с указанным сроком учтены.")
+        if undated_debts:
+            lines.append(f"Долги без срока не включены в календарный прогноз: {len(undated_debts)}.")
+    else:
+        lines.append("Учёт долгов пока выключен и не участвует в прогнозе.")
     await reply_long(update.effective_message, "\n".join(lines), inline=FIN_MENU)
 
 
@@ -4789,7 +4807,7 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
-    keys = ("await", "finance_clarification_pending", "finance_draft_pending", "todoist_pending_action", "project_action_pending", "project_asset_target")
+    keys = ("await", "finance_clarification_pending", "finance_draft_pending", "finance_debt_pending", "todoist_pending_action", "project_action_pending", "project_asset_target")
     had_pending = any(key in context.user_data for key in keys)
     for key in keys:
         context.user_data.pop(key, None)
@@ -5437,7 +5455,8 @@ async def ui_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 BACKUP_TABLES = [
     "profiles", "conversations", "memories", "daily_surveys", "analytics_reports",
     "daily_logs", "ai_insights", "finance_transactions", "finance_payments",
-    "finance_purchases", "finance_pending_actions", "agent_projects", "agent_project_items", "agent_project_assets",
+    "finance_purchases", "finance_pending_actions", "finance_debts", "finance_debt_payments",
+    "finance_budgets", "finance_budget_weights", "agent_projects", "agent_project_items", "agent_project_assets",
 ]
 BACKUP_PAGE = 1000
 BACKUP_MAX_ROWS = 200_000
@@ -5695,6 +5714,14 @@ async def post_init(app: Application) -> None:
         BotCommand("forget", "Удалить запись памяти: /forget номер"),
         BotCommand("reset", "Удалить историю диалога"),
         BotCommand("finance", "Финансы: итоги за месяц или неделю"),
+        BotCommand("debts", "Открытые долги"),
+        BotCommand("debt_add", "Добавить долг после подтверждения"),
+        BotCommand("debt_pay", "Погасить долг после подтверждения"),
+        BotCommand("budgets", "Бюджеты и расходы за месяц"),
+        BotCommand("budget_set", "Установить лимит категории"),
+        BotCommand("budget_weights", "Веса распределения"),
+        BotCommand("budget_weight", "Изменить вес категории"),
+        BotCommand("allocate", "Распределить доход по заданным весам"),
         BotCommand("expense", "Расход: /expense 350 еда обед"),
         BotCommand("income", "Доход: /income 50000 зарплата"),
         BotCommand("fin_list", "Последние финансовые записи"),
@@ -5737,6 +5764,16 @@ async def post_init(app: Application) -> None:
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
+    debt_handlers = build_finance_debt_handlers(
+        store=FinanceDebtStore(supabase, db_call),
+        enabled=FINANCE_DEBT_ENABLED,
+        is_authorized=is_authorized,
+        reject_unauthorized=reject_unauthorized,
+        user_today=user_today,
+        load_transactions=fin_load_transactions,
+        format_money=money,
+        main_menu=MAIN_MENU,
+    )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
@@ -5757,6 +5794,14 @@ def main():
     app.add_handler(CommandHandler("month", month_command))
     app.add_handler(CommandHandler("finance", finance_command))
     app.add_handler(CommandHandler("forecast", forecast_command))
+    app.add_handler(CommandHandler("debts", debt_handlers["debts"]))
+    app.add_handler(CommandHandler("debt_add", debt_handlers["debt_add"]))
+    app.add_handler(CommandHandler("debt_pay", debt_handlers["debt_pay"]))
+    app.add_handler(CommandHandler("budgets", debt_handlers["budgets"]))
+    app.add_handler(CommandHandler("budget_set", debt_handlers["budget_set"]))
+    app.add_handler(CommandHandler("budget_weights", debt_handlers["budget_weights"]))
+    app.add_handler(CommandHandler("budget_weight", debt_handlers["budget_weight"]))
+    app.add_handler(CommandHandler("allocate", debt_handlers["allocate"]))
     app.add_handler(CommandHandler("expense", expense_command))
     app.add_handler(CommandHandler("income", income_command))
     app.add_handler(CommandHandler("fin_list", fin_list_command))
@@ -5802,6 +5847,7 @@ def main():
         MessageHandler(filters.COMMAND | filters.Regex(buttons_pattern), clear_await_state),
         group=-1,
     )
+    app.add_handler(CallbackQueryHandler(debt_handlers["callback"], pattern=r"^debt:"))
     app.add_handler(CallbackQueryHandler(ui_callback, pattern=r"^(fin|pay|buy|pj|mem|sched|tz|ui):"))
 
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_project_asset))
