@@ -87,12 +87,7 @@ Supabase Auth identity/JWT. Главный Димка принимает соо�
 не машинной шиной: автоматический обмен идёт через backend.
 
 Подробности: [docs/MULTI_BOT_ARCHITECTURE.md](docs/MULTI_BOT_ARCHITECTURE.md).
-Подготовлены архитектура, клиент очереди и общий worker-каркас. Миграция
-`20261110035645_multi_bot_queue` применена в Supabase: созданы `bot_registry`,
-`bot_messages`, RLS-политики и атомарная RPC `claim_bot_messages`. Worker пока
-не подключён к `bot.py`; отдельные Supabase Auth identities/JWT ещё не выданы,
-поэтому специализированные workers не запущены и production-поведение Димки
-не изменялось.
+Архитектура очереди развёрнута в Supabase: `bot_registry`, `bot_messages`, RLS-политики и атомарная RPC `claim_bot_messages` применены. Для `finance` создана отдельная Supabase Auth identity; изолированный worker прошёл end-to-end проверку `diagnostics.echo`, а основной Димка забирает результаты через отдельный inbox. Важно: `diagnostics.echo` — только проверка транспорта. Реальные финансовые и проектные обработчики пока не подключены к отдельным worker-процессам; текущие финансовые и проектные функции основного бота продолжают работать напрямую в `bot.py`.
 
 ---
 
