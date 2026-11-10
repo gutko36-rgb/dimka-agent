@@ -80,6 +80,10 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
 
+# HTTPX logs full Telegram Bot API URLs at INFO, including the bot token.
+# Keep those request URLs out of application logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 SYSTEM_PROMPT = """
 Ты — личный ИИ-агент пользователя.
 
