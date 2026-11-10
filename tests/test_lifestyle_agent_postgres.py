@@ -107,6 +107,7 @@ class LifestylePostgresTests(unittest.TestCase):
     def test_wrong_owner_and_reused_update_id_are_rejected(self):
         with psycopg.connect(DATABASE_URL) as conn:
             goal_id = self.create_goal(conn)
+            conn.commit()
             conn.execute("SET ROLE service_role")
             with self.assertRaises(psycopg.Error):
                 self.progress(conn, 99, goal_id, 20, "wrong owner", 92003)
