@@ -5,16 +5,16 @@ JWT. Never pass a service_role client to a specialized worker.
 """
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from bot_identity import BotIdentity
 
 BOT_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 MESSAGE_TYPES = {"task", "result", "status", "event", "approval_request"}
-MESSAGE_STATUSES = {"pending", "processing", "completed", "failed", "cancelled"}
 MAX_HOP_COUNT = 8
 
 
@@ -42,6 +42,8 @@ class BotQueueClient:
     def __init__(self, supabase_client: Any, identity: BotIdentity):
         if not isinstance(identity, BotIdentity):
             raise TypeError("identity must be a BotIdentity")
+        if not isinstance(identity.bot_id, str) or not BOT_ID_RE.fullmatch(identity.bot_id):
+            raise BotQueueValidationError("identity.bot_id is invalid")
         self._client = supabase_client
         self.identity = identity
 
@@ -59,14 +61,26 @@ class BotQueueClient:
         available_at: datetime | None = None,
         expires_at: datetime | None = None,
     ) -> dict[str, Any] | None:
-        """Create one message; DB rejects duplicate sender/key pairs."""
-        recipient = str(to_bot_id).strip().lower()
+        """Create one message; duplicate sender/key pairs are ignored safely."""
+        if not isinstance(to_bot_id, str):
+            raise BotQueueValidationError("to_bot_id must be a string")
+        recipient = to_bot_id.strip().lower()
         if not BOT_ID_RE.fullmatch(recipient):
             raise BotQueueValidationError("Invalid to_bot_id")
-        if message_type not in MESSAGE_TYPES:
+        if not isinstance(message_type, str) or message_type not in MESSAGE_TYPES:
             raise BotQueueValidationError("Unsupported message_type")
         if not isinstance(payload, dict):
             raise BotQueueValidationError("payload must be a JSON object")
+        try:
+            json.dumps(payload, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise BotQueueValidationError("payload must contain only JSON-compatible values") from exc
+        for field_name, field_value in (("task_id", task_id), ("parent_message_id", parent_message_id)):
+            if field_value is not None:
+                try:
+                    UUID(str(field_value))
+                except (TypeError, ValueError, AttributeError) as exc:
+                    raise BotQueueValidationError(f"{field_name} must be a UUID") from exc
         if not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key.strip()) <= 200:
             raise BotQueueValidationError("idempotency_key must contain 1..200 characters")
         if not isinstance(schema_version, int) or isinstance(schema_version, bool) or schema_version < 1:
@@ -97,7 +111,15 @@ class BotQueueClient:
             "available_at": available_text,
             "expires_at": expires_text,
         }
-        result = self._client.table("bot_messages").insert(row).execute()
+        result = (
+            self._client.table("bot_messages")
+            .upsert(
+                row,
+                on_conflict="from_bot_id,idempotency_key",
+                ignore_duplicates=True,
+            )
+            .execute()
+        )
         rows = getattr(result, "data", None) or []
         return rows[0] if rows else None
 
@@ -158,16 +180,14 @@ class BotQueueClient:
         status: str,
         last_error: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Update processing metadata only for a message addressed to this bot."""
-        if status not in MESSAGE_STATUSES:
-            raise BotQueueValidationError("Unsupported message status")
+        """Set a terminal status only for a currently claimed message addressed to this bot."""
+        if not isinstance(status, str) or status not in {"completed", "failed", "cancelled"}:
+            raise BotQueueValidationError("Only terminal statuses can be set directly; claim_inbox() sets processing")
         if not isinstance(message_id, str) or not message_id.strip():
             raise BotQueueValidationError("message_id must not be empty")
 
         now = _iso(_utc_now())
         update: dict[str, Any] = {"status": status}
-        if status == "processing":
-            update["claimed_at"] = now
         if status in {"completed", "failed", "cancelled"}:
             update["completed_at"] = now
         if last_error is not None:
@@ -178,6 +198,7 @@ class BotQueueClient:
             .update(update)
             .eq("id", message_id)
             .eq("to_bot_id", self.identity.bot_id)
+            .eq("status", "processing")
             .execute()
         )
         return list(getattr(result, "data", None) or [])
