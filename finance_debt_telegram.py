@@ -257,6 +257,9 @@ def build_finance_debt_handlers(
         if not is_authorized(update):
             await query.answer("Доступ запрещён.", show_alert=True)
             return
+        if not enabled:
+            await query.answer("Учёт долгов и бюджетов выключен.", show_alert=True)
+            return
         await query.answer()
         action = (query.data or "").split(":", 1)[1]
         if action == "cancel":
