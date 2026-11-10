@@ -41,6 +41,34 @@ class TelegramWriteIdempotencyPostgresTests(unittest.TestCase):
             for table in tables:
                 conn.execute(f"DELETE FROM public.{table}")
 
+    def test_migrations_add_source_tracking_columns(self):
+        with psycopg.connect(DATABASE_URL) as conn:
+            rows = conn.execute(
+                """
+                SELECT table_name, column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND (column_name IN ('source_update_id', 'source_item_index')
+                       OR column_name = 'last_answer_update_id')
+                  AND table_name IN (
+                      'conversations', 'finance_payments', 'finance_purchases',
+                      'agent_projects', 'agent_project_items', 'daily_surveys'
+                  )
+                """
+            ).fetchall()
+        columns = {(row[0], row[1]) for row in rows}
+        expected = {
+            ("conversations", "source_update_id"),
+            ("conversations", "source_item_index"),
+            ("finance_payments", "source_update_id"),
+            ("finance_purchases", "source_update_id"),
+            ("agent_projects", "source_update_id"),
+            ("agent_project_items", "source_update_id"),
+            ("agent_project_items", "source_item_index"),
+            ("daily_surveys", "last_answer_update_id"),
+        }
+        self.assertTrue(expected.issubset(columns))
+
     def test_conversation_update_role_keys_are_unique_and_nulls_remain_allowed(self):
         with psycopg.connect(DATABASE_URL) as conn:
             conn.execute(
