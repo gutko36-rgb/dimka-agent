@@ -31,7 +31,7 @@ class ForeignKeyIndexesPostgresTests(unittest.TestCase):
     def setUpClass(cls):
         with psycopg.connect(DATABASE_URL) as conn:
             conn.execute((ROOT / "tests/sql/foreign_key_index_schema_stub.sql").read_text(encoding="utf-8"))
-            conn.execute((ROOT / "supabase/migrations/20261110140000_foreign_key_indexes.sql").read_text(encoding="utf-8"))
+            conn.execute((ROOT / "supabase/migrations/20261110110514_foreign_key_indexes.sql").read_text(encoding="utf-8"))
 
     def test_every_foreign_key_index_exists(self):
         with psycopg.connect(DATABASE_URL) as conn:
