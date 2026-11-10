@@ -636,17 +636,23 @@ def clip(text: str | None, limit: int = 1500) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-async def create_survey(telegram_id: int, kind: str, question: str, local_date: str) -> None:
-    await db_call(
-        supabase.table("daily_surveys")
-        .insert({
-            "telegram_id": telegram_id,
-            "survey_date": local_date,
-            "kind": kind,
-            "question": question,
-        })
-        .execute
+async def create_survey(
+    telegram_id: int, kind: str, question: str, local_date: str
+) -> dict | None:
+    payload = {
+        "telegram_id": telegram_id,
+        "survey_date": local_date,
+        "kind": kind,
+        "question": question,
+    }
+    result = await idempotent_upsert(
+        "daily_surveys",
+        payload,
+        "telegram_id,survey_date,kind",
+        payload,
     )
+    rows = result.data or []
+    return rows[0] if rows else None
 
 
 async def get_open_survey(telegram_id: int) -> dict | None:
@@ -736,19 +742,42 @@ async def build_survey_context(user_id: int, survey: dict) -> str:
 
 
 async def deliver_survey(bot, kind: str) -> None:
-    """Отправляем вопрос и заводим запись об опросе."""
-    settings = await load_settings(ALLOWED_TELEGRAM_USER_ID)
+    """Создаём один опрос на дату/тип и только затем отправляем вопрос."""
+    telegram_id = ALLOWED_TELEGRAM_USER_ID
+    settings = await load_settings(telegram_id)
     local_date = datetime.now(ZoneInfo(settings["timezone"])).date().isoformat()
     question = SURVEYS[kind]["question"]
 
-    await bot.send_message(
-        chat_id=ALLOWED_TELEGRAM_USER_ID,
-        text=question,
-        reply_markup=MAIN_MENU,
+    survey = await create_survey(telegram_id, kind, question, local_date)
+    if not survey:
+        logging.info("Опрос %s за %s уже создан; повторная отправка пропущена", kind, local_date)
+        return
+
+    try:
+        sent = await bot.send_message(
+            chat_id=telegram_id,
+            text=question,
+            reply_markup=MAIN_MENU,
+        )
+    except Exception:
+        # Не оставляем запись о вопросе, который Telegram не принял: JobQueue сможет повторить.
+        await db_call(
+            supabase.table("daily_surveys")
+            .delete()
+            .eq("id", survey["id"])
+            .eq("telegram_id", telegram_id)
+            .execute
+        )
+        raise
+
+    # Кладём вопрос в историю с детерминированным ключом исходящего Telegram message_id.
+    await save_message(
+        telegram_id,
+        "assistant",
+        question,
+        source_update_id=sent.message_id,
+        source_item_index=2,
     )
-    await create_survey(ALLOWED_TELEGRAM_USER_ID, kind, question, local_date)
-    # Кладём вопрос и в историю переписки, чтобы модель видела, на что отвечает пользователь.
-    await save_message(ALLOWED_TELEGRAM_USER_ID, "assistant", question)
 
 
 async def send_survey_job(context: ContextTypes.DEFAULT_TYPE) -> None:
