@@ -407,3 +407,10 @@ backup-*.json*
 - /habits, /habit_add, /habit_log
 
 Изменения требуют предпросмотра и подтверждения. Новые таблицы и команды находятся в review proposal; включение возможно только после тестирования на отдельной Supabase development branch через LIFESTYLE_AGENT_ENABLED=true.
+
+
+### Голос и OCR изображений (подготовлено, выключено по умолчанию)
+
+- Голосовые сообщения можно распознавать через Groq Whisper Large V3 Turbo.
+- Фото, прикреплённые к проекту, можно дополнительно распознавать через Groq Vision OCR.
+- Оба режима отключены по умолчанию: VOICE_TRANSCRIPTION_ENABLED=false и VISION_OCR_ENABLED=false. OCR-текст показывается в Telegram, но пока не сохраняется в поисковый индекс.
