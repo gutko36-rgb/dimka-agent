@@ -357,15 +357,33 @@ async def load_history(telegram_id: int, limit: int = 12) -> list[dict]:
     ]
 
 
-async def save_message(telegram_id: int, role: str, content: str) -> None:
-    await db_call(
-        supabase.table("conversations")
-        .insert({
-            "telegram_id": telegram_id,
-            "role": role,
-            "content": content,
-        })
-        .execute
+async def save_message(
+    telegram_id: int,
+    role: str,
+    content: str,
+    *,
+    source_update_id: int | None = None,
+    source_item_index: int = 0,
+) -> None:
+    legacy_payload = {
+        "telegram_id": telegram_id,
+        "role": role,
+        "content": content,
+    }
+    if source_update_id is None:
+        await db_call(supabase.table("conversations").insert(legacy_payload).execute)
+        return
+
+    payload = {
+        **legacy_payload,
+        "source_update_id": source_update_id,
+        "source_item_index": source_item_index,
+    }
+    await idempotent_upsert(
+        "conversations",
+        payload,
+        "telegram_id,source_update_id,source_item_index",
+        legacy_payload,
     )
 
 
@@ -3685,12 +3703,22 @@ async def handle_project_asset(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # ===================== ОТВЕТ МОДЕЛИ =====================
 
-async def ask_ai(user_id: int, message: str, extra_system: str = "") -> str:
+async def ask_ai(
+    user_id: int,
+    message: str,
+    extra_system: str = "",
+    *,
+    source_update_id: int | None = None,
+) -> str:
     try:
         history = await load_history(user_id)
 
         # Сохраняем новое сообщение до запроса к модели.
-        await save_message(user_id, "user", message)
+        await save_message(
+            user_id, "user", message,
+            source_update_id=source_update_id,
+            source_item_index=0,
+        )
 
         # Память подгружаем отдельно: если с ней беда, бот всё равно ответит.
         try:
@@ -3774,11 +3802,21 @@ async def ask_ai(user_id: int, message: str, extra_system: str = "") -> str:
                 action = todoist_action_from_tool_call(tool_call, active_tasks)
                 if action:
                     answer = todoist_action_prompt(action)
-                    await save_message(user_id, "assistant", "Предложено действие Todoist; ожидает подтверждения пользователя.")
+                    await save_message(
+                        user_id,
+                        "assistant",
+                        "Предложено действие Todoist; ожидает подтверждения пользователя.",
+                        source_update_id=source_update_id,
+                        source_item_index=1,
+                    )
                     return answer
 
         answer = assistant_message.content or "Не удалось получить текстовый ответ."
-        await save_message(user_id, "assistant", answer)
+        await save_message(
+            user_id, "assistant", answer,
+            source_update_id=source_update_id,
+            source_item_index=1,
+        )
         return answer
 
     except Exception:
@@ -4616,7 +4654,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.exception("Не удалось проверить активный опрос")
         survey = None
 
-    answer = await ask_ai(user_id, user_message, extra_system)
+    answer = await ask_ai(
+        user_id,
+        user_message,
+        extra_system,
+        source_update_id=update.update_id,
+    )
     if answer.startswith("__TODOIST_ACTION__"):
         try:
             action = json.loads(answer[len("__TODOIST_ACTION__"):])
