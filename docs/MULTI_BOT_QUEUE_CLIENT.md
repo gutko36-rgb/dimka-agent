@@ -96,4 +96,15 @@ python bot_worker_service.py --once
 python bot_worker_service.py
 ```
 
+Чтобы проверить полный обмен, оставь worker запущенным и на доверенной административной машине выполни:
+
+```powershell
+$env:SUPABASE_URL="https://<project-ref>.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY="<service-role-key>"
+$env:SMOKE_TEST_WORKER_ID="finance"
+python scripts/smoke_test_worker.py
+```
+
+Скрипт отправляет задачу от `dimka`, ждёт ответ worker до 90 секунд и проверяет, что результат вернулся в очередь. Service-role key используется только на доверенной машине для smoke test.
+
 Пока зарегистрирован только безопасный smoke-test обработчик `diagnostics.echo`. Он подтверждает аутентификацию, RLS, доставку задачи, возврат результата и завершение сообщения, но не выполняет финансовые операции и не читает пользовательские таблицы. Финансовые и проектные обработчики будут подключаться отдельно после проверки их owner-scoping и прав доступа.
