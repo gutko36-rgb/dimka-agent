@@ -184,7 +184,9 @@ class FinanceDebtTelegramTests(unittest.IsolatedAsyncioTestCase):
         await self.handlers["callback"](callback_update, self.context)
         calls = [call for call in self.store.calls if call[0] == "record_payment"]
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0][1:4], (42, 3, calls[0][3]))
+        self.assertEqual(calls[0][1], 42)
+        self.assertEqual(calls[0][2], 3)
+        self.assertEqual(str(calls[0][3]), "2500.00")
         self.assertEqual(calls[0][4]["source_update_id"], 9001)
         self.assertIn("Финансовая транзакция №101 создана", query.edits[-1][0])
 
