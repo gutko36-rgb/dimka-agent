@@ -85,6 +85,10 @@ create index bot_messages_expiry_idx
     on public.bot_messages (expires_at)
     where status in ('pending', 'processing') and expires_at is not null;
 
+create index bot_messages_claim_lease_idx
+    on public.bot_messages (to_bot_id, claimed_at)
+    where status = 'processing';
+
 -- Register the existing primary bot as a non-secret identity.
 -- ON CONFLICT DO NOTHING preserves any deliberately configured registry row.
 insert into public.bot_registry (bot_id, role, display_name)
@@ -156,6 +160,81 @@ create policy bot_messages_update_recipient
     with check (
         to_bot_id = (select auth.jwt() -> 'app_metadata' ->> 'bot_id')
     );
+
+-- Atomically claim work for the authenticated bot. This is SECURITY INVOKER:
+-- RLS remains active, and the caller can only claim rows addressed to its
+-- trusted app_metadata.bot_id. Expired leases are retried; exhausted messages
+-- are marked failed instead of remaining stuck forever.
+create or replace function public.claim_bot_messages(
+    p_limit integer default 20,
+    p_lease_seconds integer default 300
+)
+returns setof public.bot_messages
+language plpgsql
+volatile
+security invoker
+set search_path = ''
+as $function$
+declare
+    v_bot_id text;
+begin
+    v_bot_id := (select auth.jwt() -> 'app_metadata' ->> 'bot_id');
+
+    if v_bot_id is null or btrim(v_bot_id) = '' then
+        raise exception 'Missing app_metadata.bot_id claim'
+            using errcode = '42501';
+    end if;
+    if p_limit is null or p_limit < 1 or p_limit > 100 then
+        raise exception 'p_limit must be between 1 and 100'
+            using errcode = '22023';
+    end if;
+    if p_lease_seconds is null or p_lease_seconds < 30 or p_lease_seconds > 3600 then
+        raise exception 'p_lease_seconds must be between 30 and 3600'
+            using errcode = '22023';
+    end if;
+
+    update public.bot_messages as m
+       set status = 'failed',
+           completed_at = now(),
+           last_error = 'Claim lease expired; maximum attempts reached'
+     where m.to_bot_id = v_bot_id
+       and m.status = 'processing'
+       and m.claimed_at < now() - pg_catalog.make_interval(secs => p_lease_seconds)
+       and m.attempt_count >= m.max_attempts;
+
+    return query
+    with candidates as (
+        select m.id
+          from public.bot_messages as m
+         where m.to_bot_id = v_bot_id
+           and (m.expires_at is null or m.expires_at > now())
+           and m.attempt_count < m.max_attempts
+           and (
+                m.status = 'pending'
+                or (
+                    m.status = 'processing'
+                    and m.claimed_at is not null
+                    and m.claimed_at < now() - pg_catalog.make_interval(secs => p_lease_seconds)
+                )
+           )
+         order by m.available_at, m.created_at
+         limit p_limit
+         for update of m skip locked
+    )
+    update public.bot_messages as m
+       set status = 'processing',
+           claimed_at = now(),
+           attempt_count = m.attempt_count + 1,
+           completed_at = null,
+           last_error = null
+      from candidates as c
+     where m.id = c.id
+    returning m.*;
+end;
+$function$;
+
+revoke all on function public.claim_bot_messages(integer, integer) from public, anon;
+grant execute on function public.claim_bot_messages(integer, integer) to authenticated;
 
 -- Server-side administration is reserved for trusted backend operations.
 -- Never place this key in a bot's environment if that bot is not the trusted
