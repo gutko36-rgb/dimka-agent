@@ -13,7 +13,8 @@ BotQueueClient должен получать Supabase client, аутентифи
 ## Методы
 
 - enqueue(...) — создаёт задачу/событие с sender ID из BotIdentity, адресатом, типом, JSON payload и idempotency key.
-- fetch_inbox(limit=20) — читает только pending-сообщения, адресованные этому боту и уже доступные по времени.
+- claim_inbox(limit=20, lease_seconds=300) — атомарно забирает доступные сообщения через RPC `claim_bot_messages`; параллельные workers не получают одну запись. Если worker упал, просроченная аренда позволяет повторить попытку; после `max_attempts` сообщение переводится в `failed`.
+- fetch_inbox(limit=20) — только диагностическое чтение pending-сообщений; не использовать как механизм выдачи работы нескольким workers.
 - update_status(...) — обновляет статус и processing metadata только для сообщения, адресованного этому боту.
 
 Дублирование (from_bot_id, idempotency_key), проверка активности адресата и ограничения RLS обеспечиваются схемой БД, а не этим модулем.
@@ -22,7 +23,7 @@ BotQueueClient должен получать Supabase client, аутентифи
 
 - SQL из docs/sql/MULTI_BOT_QUEUE_PROPOSAL.sql ещё не применён в Supabase.
 - Модуль не подключён к bot.py и не выполняет polling.
-- Нет автоматического захвата задачи с блокировкой строки; для параллельных worker-процессов понадобится атомарная RPC-функция.
+- SQL proposal теперь содержит атомарную RPC-функцию `claim_bot_messages` с `FOR UPDATE SKIP LOCKED`, арендой (lease) и ограничением повторов. Её нужно проверить на тестовой PostgreSQL/Supabase среде до production-применения.
 - Нет второго Telegram-бота, токенов или Auth identities.
 - Тесты используют поддельный Supabase-клиент и проверяют формирование запросов, а не реальную базу/RLS.
 
