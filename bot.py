@@ -2480,11 +2480,6 @@ async def buy_done_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id, "expense", float(purchase["price"]), "покупка", purchase["title"], today,
             source_update_id=update.update_id,
         )
-        if not inserted:
-            await update.effective_message.reply_text(
-                "Это действие уже было обработано ранее.", reply_markup=MAIN_MENU
-            )
-            return
         await db_call(
             supabase.table("finance_purchases")
             .update({"status": "bought"})
@@ -2492,6 +2487,12 @@ async def buy_done_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             .eq("telegram_id", user_id)
             .execute
         )
+        if not inserted:
+            await update.effective_message.reply_text(
+                "Расход уже был записан ранее; покупка помечена как купленная.",
+                reply_markup=MAIN_MENU,
+            )
+            return
     except Exception:
         logging.exception("Не удалось отметить покупку купленной")
         await update.effective_message.reply_text(FIN_SQL_HINT, reply_markup=MAIN_MENU)
