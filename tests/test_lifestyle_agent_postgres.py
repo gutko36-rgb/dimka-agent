@@ -155,6 +155,7 @@ class LifestylePostgresTests(unittest.TestCase):
             conn.rollback()
 
             conn.execute("SET ROLE service_role")
+            foreign_test_habit = self.create_habit(conn, owner=42, title="Foreign key test")
             with self.assertRaises(psycopg.Error):
                 conn.execute(
                     """
@@ -162,7 +163,7 @@ class LifestylePostgresTests(unittest.TestCase):
                         (telegram_id,habit_id,log_date,status,source_update_id)
                     VALUES (99,%s,'2026-11-10','done',92007)
                     """,
-                    (habit_id,),
+                    (foreign_test_habit,),
                 )
 
     def test_authenticated_role_cannot_read_lifestyle_tables_or_execute_rpc(self):
