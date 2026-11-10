@@ -110,7 +110,7 @@ class BotQueueClientTests(unittest.TestCase):
     def test_claim_inbox_uses_atomic_rpc_for_current_bot(self):
         self.queue.claim_inbox(limit=7, lease_seconds=600)
         self.assertIn(
-            ("rpc", ("claim_bot_messages", {"p_limit": 7, "p_lease_seconds": 600}), {}),
+            ("rpc", ("claim_bot_messages", {"p_limit": 7, "p_lease_seconds": 600, "p_message_type": "task"}), {}),
             self.supabase.calls,
         )
 
