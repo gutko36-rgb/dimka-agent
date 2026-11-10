@@ -21,10 +21,10 @@ BotQueueClient должен получать Supabase client, аутентифи
 
 ## Ограничения текущего этапа
 
-- SQL из docs/sql/MULTI_BOT_QUEUE_PROPOSAL.sql ещё не применён в Supabase. Для новых таблиц `public` после 30 октября 2026 явные GRANT обязательны для доступа через Data API; proposal выдаёт только минимальные права `authenticated` и административные права `service_role`, не выдавая доступ `anon`.
+- SQL-миграция `20261110035645_multi_bot_queue` уже применена в Supabase. Для очереди созданы явные минимальные GRANT и RLS-политики; `anon` не получает доступ.
 - Модуль не подключён к bot.py и не выполняет polling.
 - SQL proposal теперь содержит атомарную RPC-функцию `claim_bot_messages` с `FOR UPDATE SKIP LOCKED`, арендой (lease) и ограничением повторов. Её нужно проверить на тестовой PostgreSQL/Supabase среде до production-применения.
-- Пока не созданы отдельные Supabase Auth identities/JWT для внутренних workers. Отдельные Telegram-токены не нужны: Telegram-интерфейс остаётся у главного Димки.
+- Скрипт `scripts/provision_bot_identity.py` создаёт отдельную Supabase Auth identity/JWT для worker. Пока ни одна такая identity ещё не создана; Telegram-токены workers не нужны.
 - Unit tests используют поддельный Supabase-клиент для проверки Python-запросов. Отдельные CI integration tests применяют SQL proposal к настоящему PostgreSQL 17 и проверяют RLS, подмену отправителя, запрет anon, выбор типа сообщения, параллельный claim и повтор после истечения lease. Тестовый `auth.jwt()` — shim; это ещё не проверка реального Supabase Auth, подписанных JWT или настроек Data API.
 
 ## Локальная проверка на Windows
@@ -69,7 +69,7 @@ python scripts/provision_bot_identity.py --bot-id finance --role finance --displ
 - генерирует отдельный случайный пароль и показывает его один раз;
 - не записывает service-role key в worker и не меняет существующего пользователя.
 
-Скопируй выведенные `BOT_AUTH_EMAIL` и `BOT_AUTH_PASSWORD` в приватный `.env` на отдельной машине worker. Там должны быть:
+Скопируй выведенные `BOT_AUTH_EMAIL` и `BOT_AUTH_PASSWORD` в отдельный приватный файл `.env.worker` в корне проекта. Worker загружает только этот файл и не читает основной `.env` Димки, где находится service-role key. Там должны быть:
 
 ```env
 SUPABASE_URL=https://<project-ref>.supabase.co
