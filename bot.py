@@ -2653,6 +2653,23 @@ async def pj_get(user_id: int, project_id: int) -> dict | None:
     return (result.data or [None])[0]
 
 
+async def pj_get_by_source_update(user_id: int, source_update_id: int) -> dict | None:
+    try:
+        result = await db_call(
+            supabase.table("agent_projects")
+            .select("*")
+            .eq("telegram_id", user_id)
+            .eq("source_update_id", source_update_id)
+            .limit(1)
+            .execute
+        )
+    except Exception as error:
+        if is_missing_idempotency_schema_error(error):
+            return None
+        raise
+    return (result.data or [None])[0]
+
+
 async def pj_list(user_id: int) -> list[dict]:
     result = await db_call(
         supabase.table("agent_projects")
@@ -3641,10 +3658,12 @@ async def project_action_callback(update: Update, context: ContextTypes.DEFAULT_
     try:
         kind = draft["action"]
         if kind == "create_project":
-            current = await pj_list(user_id)
-            if any(p["title"].casefold().strip() == draft["title"].casefold().strip() for p in current):
-                raise ValueError("Такой проект уже существует")
-            project = await pj_create(user_id, draft["title"], source_update_id=update.update_id)
+            project = await pj_get_by_source_update(user_id, update.update_id)
+            if not project:
+                current = await pj_list(user_id)
+                if any(p["title"].casefold().strip() == draft["title"].casefold().strip() for p in current):
+                    raise ValueError("Такой проект уже существует")
+                project = await pj_create(user_id, draft["title"], source_update_id=update.update_id)
             fields = {}
             if draft.get("description"):
                 fields["description"] = draft["description"]
