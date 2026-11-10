@@ -101,6 +101,33 @@ class BotQueueClient:
         rows = getattr(result, "data", None) or []
         return rows[0] if rows else None
 
+
+    def claim_inbox(
+        self,
+        *,
+        limit: int = 20,
+        lease_seconds: int = 300,
+    ) -> list[dict[str, Any]]:
+        """Atomically claim available messages for this bot.
+
+        PostgreSQL uses FOR UPDATE SKIP LOCKED so concurrent workers cannot
+        claim the same message. Expired leases are retried up to max_attempts.
+        """
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise BotQueueValidationError("limit must be between 1 and 100")
+        if (
+            not isinstance(lease_seconds, int)
+            or isinstance(lease_seconds, bool)
+            or not 30 <= lease_seconds <= 3600
+        ):
+            raise BotQueueValidationError("lease_seconds must be between 30 and 3600")
+
+        result = self._client.rpc(
+            "claim_bot_messages",
+            {"p_limit": limit, "p_lease_seconds": lease_seconds},
+        ).execute()
+        return list(getattr(result, "data", None) or [])
+
     def fetch_inbox(self, *, limit: int = 20) -> list[dict[str, Any]]:
         """Read pending, available messages addressed to this bot."""
         if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
