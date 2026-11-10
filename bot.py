@@ -18,6 +18,8 @@ from intent_dispatcher import dispatch_intent
 from finance_planning import forecast_balance
 from finance_debt import FinanceDebtStore
 from finance_debt_telegram import build_finance_debt_handlers
+from lifestyle_agent import LifestyleStore
+from lifestyle_telegram import build_lifestyle_handlers
 from project_documents import build_project_timeline, extract_document_text, search_document_text
 from supabase import create_client, Client
 
@@ -48,6 +50,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 # Токен Todoist необязателен: без него бот работает, просто не видит задачи.
 TODOIST_TOKEN = os.getenv("TODOIST_API_TOKEN")
 FINANCE_DEBT_ENABLED = os.getenv("FINANCE_DEBT_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+LIFESTYLE_AGENT_ENABLED = os.getenv("LIFESTYLE_AGENT_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 if not TELEGRAM_TOKEN or not GROQ_API_KEY or not GROQ_MODEL:
     raise RuntimeError("Не заполнены TELEGRAM_BOT_TOKEN, GROQ_API_KEY или GROQ_MODEL в .env")
@@ -253,6 +256,11 @@ HELP_TEXT = (
     "/budgets — лимиты и расходы за месяц; /budget_set категория | лимит\n"
     "/budget_weights — веса; /budget_weight категория | вес\n"
     "/allocate доход | обязательные расходы | долги | накопления — черновик распределения\n"
+    "/life — сводка целей и привычек за неделю\n"
+    "/goals — цели; /goal_add название | описание|- | срок|-\n"
+    "/goal_progress ID | 0-100 | заметка|- — обновить прогресс после подтверждения\n"
+    "/habits — привычки; /habit_add название | раз в неделю | описание|-\n"
+    "/habit_log ID | done|skipped | заметка|- — отметить после подтверждения\n"
     "/fin_list — последние записи, /fin_del номер — удалить\n"
     "/payment 15000 5 Аренда — платёж каждый месяц 5-го числа\n"
     "/payments — список платежей, /payment_del номер — удалить\n"
@@ -4807,7 +4815,7 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
-    keys = ("await", "finance_clarification_pending", "finance_draft_pending", "finance_debt_pending", "todoist_pending_action", "project_action_pending", "project_asset_target")
+    keys = ("await", "finance_clarification_pending", "finance_draft_pending", "finance_debt_pending", "lifestyle_pending", "todoist_pending_action", "project_action_pending", "project_asset_target")
     had_pending = any(key in context.user_data for key in keys)
     for key in keys:
         context.user_data.pop(key, None)
@@ -5456,7 +5464,8 @@ BACKUP_TABLES = [
     "profiles", "conversations", "memories", "daily_surveys", "analytics_reports",
     "daily_logs", "ai_insights", "finance_transactions", "finance_payments",
     "finance_purchases", "finance_pending_actions", "finance_debts", "finance_debt_payments",
-    "finance_budgets", "finance_budget_weights", "agent_projects", "agent_project_items", "agent_project_assets",
+    "finance_budgets", "finance_budget_weights", "lifestyle_goals", "lifestyle_goal_updates",
+    "lifestyle_habits", "lifestyle_habit_logs", "agent_projects", "agent_project_items", "agent_project_assets",
 ]
 BACKUP_PAGE = 1000
 BACKUP_MAX_ROWS = 200_000
@@ -5722,6 +5731,13 @@ async def post_init(app: Application) -> None:
         BotCommand("budget_weights", "Веса распределения"),
         BotCommand("budget_weight", "Изменить вес категории"),
         BotCommand("allocate", "Распределить доход по заданным весам"),
+        BotCommand("life", "Сводка целей и привычек"),
+        BotCommand("goals", "Активные цели"),
+        BotCommand("goal_add", "Добавить цель после подтверждения"),
+        BotCommand("goal_progress", "Обновить прогресс цели"),
+        BotCommand("habits", "Активные привычки"),
+        BotCommand("habit_add", "Добавить привычку после подтверждения"),
+        BotCommand("habit_log", "Отметить привычку после подтверждения"),
         BotCommand("expense", "Расход: /expense 350 еда обед"),
         BotCommand("income", "Доход: /income 50000 зарплата"),
         BotCommand("fin_list", "Последние финансовые записи"),
@@ -5774,6 +5790,14 @@ def main():
         format_money=money,
         main_menu=MAIN_MENU,
     )
+    lifestyle_handlers = build_lifestyle_handlers(
+        store=LifestyleStore(supabase, db_call),
+        enabled=LIFESTYLE_AGENT_ENABLED,
+        is_authorized=is_authorized,
+        reject_unauthorized=reject_unauthorized,
+        user_today=user_today,
+        main_menu=MAIN_MENU,
+    )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
@@ -5802,6 +5826,13 @@ def main():
     app.add_handler(CommandHandler("budget_weights", debt_handlers["budget_weights"]))
     app.add_handler(CommandHandler("budget_weight", debt_handlers["budget_weight"]))
     app.add_handler(CommandHandler("allocate", debt_handlers["allocate"]))
+    app.add_handler(CommandHandler("life", lifestyle_handlers["life"]))
+    app.add_handler(CommandHandler("goals", lifestyle_handlers["goals"]))
+    app.add_handler(CommandHandler("goal_add", lifestyle_handlers["goal_add"]))
+    app.add_handler(CommandHandler("goal_progress", lifestyle_handlers["goal_progress"]))
+    app.add_handler(CommandHandler("habits", lifestyle_handlers["habits"]))
+    app.add_handler(CommandHandler("habit_add", lifestyle_handlers["habit_add"]))
+    app.add_handler(CommandHandler("habit_log", lifestyle_handlers["habit_log"]))
     app.add_handler(CommandHandler("expense", expense_command))
     app.add_handler(CommandHandler("income", income_command))
     app.add_handler(CommandHandler("fin_list", fin_list_command))
@@ -5848,6 +5879,7 @@ def main():
         group=-1,
     )
     app.add_handler(CallbackQueryHandler(debt_handlers["callback"], pattern=r"^debt:"))
+    app.add_handler(CallbackQueryHandler(lifestyle_handlers["callback"], pattern=r"^life:"))
     app.add_handler(CallbackQueryHandler(ui_callback, pattern=r"^(fin|pay|buy|pj|mem|sched|tz|ui):"))
 
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_project_asset))
