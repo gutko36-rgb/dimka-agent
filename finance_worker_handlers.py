@@ -90,6 +90,13 @@ def finance_summary(payload: dict[str, Any]) -> dict[str, Any]:
         result["date_from"] = date_from.isoformat()
     if date_to:
         result["date_to"] = date_to.isoformat()
+    if payload.get("period_label"):
+        result["period_label"] = str(payload["period_label"])[:120]
+    if payload.get("project_title"):
+        result["project_title"] = str(payload["project_title"])[:120]
+    search_terms = payload.get("search_terms")
+    if isinstance(search_terms, list):
+        result["search_terms"] = [str(term)[:40] for term in search_terms[:5]]
     return result
 
 
