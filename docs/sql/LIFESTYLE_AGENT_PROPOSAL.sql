@@ -200,6 +200,6 @@ comment on table public.lifestyle_goal_updates is
 comment on table public.lifestyle_habits is
     'Owner-scoped habits with weekly target frequency.';
 comment on table public.lifestyle_habit_logs is
-    'One daily completion or skip record per owner and habit.';
+    'Append-only daily habit events; reports use the latest event per habit and local date.';
 
 commit;
