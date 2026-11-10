@@ -11,7 +11,7 @@ class FakeQuery:
         self.calls = calls
 
     def __getattr__(self, name):
-        if name in {"insert", "update", "select", "eq", "lte", "order", "limit"}:
+        if name in {"insert", "upsert", "update", "select", "eq", "lte", "order", "limit"}:
             def method(*args, **kwargs):
                 self.calls.append((name, args, kwargs))
                 return self
@@ -63,13 +63,15 @@ class BotQueueClientTests(unittest.TestCase):
             payload={"action": "categorize"},
             idempotency_key="telegram-update-123",
         )
-        insert = self.calls_named("insert")[0][1][0]
+        upsert = self.calls_named("upsert")[0]
+        insert = upsert[1][0]
         self.assertEqual(insert["from_bot_id"], "dimka")
         self.assertEqual(insert["to_bot_id"], "finance")
         self.assertEqual(insert["message_type"], "task")
         self.assertEqual(insert["payload"], {"action": "categorize"})
         self.assertEqual(insert["idempotency_key"], "telegram-update-123")
         self.assertEqual(insert["hop_count"], 0)
+        self.assertEqual(upsert[2], {"on_conflict": "from_bot_id,idempotency_key", "ignore_duplicates": True})
 
     def test_enqueue_rejects_invalid_recipient(self):
         with self.assertRaises(BotQueueValidationError):
@@ -79,7 +81,7 @@ class BotQueueClientTests(unittest.TestCase):
                 payload={},
                 idempotency_key="key",
             )
-        self.assertEqual(self.calls_named("insert"), [])
+        self.assertEqual(self.calls_named("upsert"), [])
 
     def test_enqueue_rejects_non_object_payload(self):
         with self.assertRaises(BotQueueValidationError):
@@ -89,6 +91,24 @@ class BotQueueClientTests(unittest.TestCase):
                 payload=["not", "an", "object"],
                 idempotency_key="key",
             )
+
+    def test_enqueue_rejects_non_json_payload_and_invalid_task_id(self):
+        with self.assertRaises(BotQueueValidationError):
+            self.queue.enqueue(
+                to_bot_id="finance",
+                message_type="task",
+                payload={"not_json": object()},
+                idempotency_key="json-invalid",
+            )
+        with self.assertRaises(BotQueueValidationError):
+            self.queue.enqueue(
+                to_bot_id="finance",
+                message_type="task",
+                payload={},
+                idempotency_key="uuid-invalid",
+                task_id="not-a-uuid",
+            )
+        self.assertEqual(self.calls_named("upsert"), [])
 
     def test_enqueue_rejects_invalid_message_type_and_hop_count(self):
         args = dict(to_bot_id="finance", payload={}, idempotency_key="key")
@@ -139,6 +159,7 @@ class BotQueueClientTests(unittest.TestCase):
         self.assertIn("completed_at", update)
         self.assertIn(("eq", ("id", "message-1"), {}), self.supabase.calls)
         self.assertIn(("eq", ("to_bot_id", "dimka"), {}), self.supabase.calls)
+        self.assertIn(("eq", ("status", "processing"), {}), self.supabase.calls)
 
     def test_update_status_rejects_unknown_status(self):
         with self.assertRaises(BotQueueValidationError):
