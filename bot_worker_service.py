@@ -80,7 +80,7 @@ def main() -> int:
 
     try:
         from dotenv import load_dotenv
-        load_dotenv()
+        load_dotenv('.env.worker', override=False)
         queue, client = create_authenticated_queue()
         worker = build_worker(queue)
     except Exception as exc:
