@@ -160,6 +160,7 @@ class BotQueueClientTests(unittest.TestCase):
         self.assertIn(("eq", ("id", "message-1"), {}), self.supabase.calls)
         self.assertIn(("eq", ("to_bot_id", "dimka"), {}), self.supabase.calls)
         self.assertIn(("eq", ("status", "processing"), {}), self.supabase.calls)
+        self.assertIn(("select", ("id,status",), {}), self.supabase.calls)
 
     def test_update_status_rejects_unknown_status(self):
         with self.assertRaises(BotQueueValidationError):

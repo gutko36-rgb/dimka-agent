@@ -199,6 +199,7 @@ class BotQueueClient:
             .eq("id", message_id)
             .eq("to_bot_id", self.identity.bot_id)
             .eq("status", "processing")
+            .select("id,status")
             .execute()
         )
         return list(getattr(result, "data", None) or [])
