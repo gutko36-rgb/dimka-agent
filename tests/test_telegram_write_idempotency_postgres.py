@@ -26,7 +26,7 @@ class TelegramWriteIdempotencyPostgresTests(unittest.TestCase):
                 "supabase/migrations/20261109172848_finance_pending_confirmation_actions.sql",
                 "supabase/migrations/20261109173659_project_material_attachments.sql",
                 "supabase/migrations/20261109173851_project_asset_dedup_per_project.sql",
-                "supabase/migrations/20261110120000_telegram_write_idempotency.sql",
+                "supabase/migrations/20261110121209_telegram_write_idempotency.sql",
             )
             for migration_path in migration_paths:
                 conn.execute((ROOT / migration_path).read_text(encoding="utf-8"))
