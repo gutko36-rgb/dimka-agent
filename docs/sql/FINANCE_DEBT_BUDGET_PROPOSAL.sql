@@ -40,6 +40,10 @@ create unique index if not exists finance_debts_owner_source_update_uidx
 create index if not exists finance_debts_owner_status_due_idx
     on public.finance_debts (telegram_id, status, due_date);
 
+create unique index if not exists finance_transactions_owner_source_item_uidx
+    on public.finance_transactions (telegram_id, source_update_id, source_item_index)
+    where source_update_id is not null;
+
 create unique index if not exists finance_transactions_id_telegram_id_uidx
     on public.finance_transactions (id, telegram_id);
 
