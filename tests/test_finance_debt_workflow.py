@@ -66,9 +66,9 @@ class FinanceDebtWorkflowTests(unittest.TestCase):
             [{"category": "Еда", "limit_amount": 2000}],
             date(2026, 11, 10),
         )
-        self.assertIn("1 700", text)
-        self.assertIn("2 000", text)
-        self.assertIn("осталось 300", text)
+        self.assertIn("1700.00", text)
+        self.assertIn("2000.00", text)
+        self.assertIn("осталось 300.00", text)
 
     def test_render_debts_shows_direction_and_remaining_amount(self):
         text = render_debts([{
@@ -82,14 +82,14 @@ class FinanceDebtWorkflowTests(unittest.TestCase):
         }])
         self.assertIn("№3", text)
         self.assertIn("Я должен", text)
-        self.assertIn("7 500", text)
+        self.assertIn("7500.00", text)
 
     def test_distribution_uses_only_supplied_weights(self):
         values = parse_distribution("100000 | 20000 | 5000 | 10000")
         text = render_distribution(values, {"Еда": 2, "Транспорт": 1})
-        self.assertIn("Доступно: 65 000", text)
-        self.assertIn("Еда: 43 333.33", text)
-        self.assertIn("Транспорт: 21 666.67", text)
+        self.assertIn("Доступно: 65000.00", text)
+        self.assertIn("Еда: 43333.33", text)
+        self.assertIn("Транспорт: 21666.67", text)
 
     def test_distribution_rejects_negative_inputs(self):
         with self.assertRaises(ValueError):
