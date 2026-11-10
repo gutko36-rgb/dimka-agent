@@ -117,7 +117,7 @@ class LifestylePostgresTests(unittest.TestCase):
             with self.assertRaises(psycopg.Error):
                 self.progress(conn, 42, goal_id, 30, "different payload", 92004)
 
-    def test_habit_logs_are_owner_scoped_and_unique_per_day(self):
+    def test_habit_logs_are_owner_scoped_and_append_only(self):
         with psycopg.connect(DATABASE_URL) as conn:
             habit_id = self.create_habit(conn)
             conn.execute("SET ROLE service_role")
@@ -129,12 +129,26 @@ class LifestylePostgresTests(unittest.TestCase):
                 """,
                 (habit_id,),
             )
+            conn.execute(
+                """
+                INSERT INTO public.lifestyle_habit_logs
+                    (telegram_id,habit_id,log_date,status,source_update_id)
+                VALUES (42,%s,'2026-11-10','skipped',92006)
+                """,
+                (habit_id,),
+            )
+            count = conn.execute(
+                "SELECT count(*) FROM public.lifestyle_habit_logs WHERE telegram_id=42 AND habit_id=%s AND log_date='2026-11-10'",
+                (habit_id,),
+            ).fetchone()[0]
+            self.assertEqual(count, 2)
+
             with self.assertRaises(psycopg.errors.UniqueViolation):
                 conn.execute(
                     """
                     INSERT INTO public.lifestyle_habit_logs
                         (telegram_id,habit_id,log_date,status,source_update_id)
-                    VALUES (42,%s,'2026-11-10','skipped',92006)
+                    VALUES (42,%s,'2026-11-11','done',92005)
                     """,
                     (habit_id,),
                 )
