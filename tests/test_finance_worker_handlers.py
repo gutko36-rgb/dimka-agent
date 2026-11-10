@@ -20,8 +20,14 @@ class FinanceWorkerHandlerTests(unittest.TestCase):
             ],
             "date_from": "2026-11-01",
             "date_to": "2026-11-30",
+            "period_label": "за ноябрь",
+            "project_title": "Пульт",
+            "search_terms": ["материалы"],
         })
         self.assertEqual(result["count"], 3)
+        self.assertEqual(result["period_label"], "за ноябрь")
+        self.assertEqual(result["project_title"], "Пульт")
+        self.assertEqual(result["search_terms"], ["материалы"])
         self.assertEqual(result["income"], "10000.00")
         self.assertEqual(result["expense"], "3500.00")
         self.assertEqual(result["difference"], "6500.00")
