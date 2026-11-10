@@ -148,6 +148,20 @@ class BotResultInboxTests(unittest.TestCase):
         self.assertIn("90000.00 ₽", text)
         self.assertIn("Аренда", text)
 
+    def test_finance_failure_shows_safe_error_code_without_json(self):
+        text = format_result_message({
+            "message_type": "result",
+            "from_bot_id": "finance",
+            "payload": {
+                "task_type": "finance.summary",
+                "ok": False,
+                "error": "handler_error",
+            },
+        })
+        self.assertIn("Финансовый агент не смог обработать запрос", text)
+        self.assertIn("handler_error", text)
+        self.assertNotIn('"error"', text)
+
 
 if __name__ == "__main__":
     unittest.main()
