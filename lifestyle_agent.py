@@ -336,6 +336,7 @@ class LifestyleStore:
             .lte("log_date", end_date.isoformat())
             .order("log_date")
             .order("created_at")
+            .order("id")
             .execute
         )
         return _rows(result)
