@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from decimal import Decimal
 import unittest
 from pathlib import Path
 
@@ -71,12 +72,12 @@ class FinanceDebtBudgetPostgresTests(unittest.TestCase):
 
             first = self.pay(conn, 42, debt_id, "2500", 91001)
             self.assertFalse(first["duplicate"])
-            self.assertEqual(str(first["amount_remaining"]), "7500.00")
+            self.assertEqual(Decimal(str(first["amount_remaining"])), Decimal("7500.00"))
             self.assertEqual(first["status"], "open")
 
             repeated = self.pay(conn, 42, debt_id, "2500", 91001)
             self.assertTrue(repeated["duplicate"])
-            self.assertEqual(str(repeated["amount_remaining"]), "7500.00")
+            self.assertEqual(Decimal(str(repeated["amount_remaining"])), Decimal("7500.00"))
 
             counts = conn.execute(
                 """
@@ -93,7 +94,7 @@ class FinanceDebtBudgetPostgresTests(unittest.TestCase):
             conn.execute("SET ROLE service_role")
             result = self.pay(conn, 42, debt_id, "5000", 91002)
             self.assertEqual(result["status"], "paid")
-            self.assertEqual(str(result["amount_remaining"]), "0.00")
+            self.assertEqual(Decimal(str(result["amount_remaining"])), Decimal("0.00"))
             transaction = conn.execute(
                 "SELECT kind,category,amount FROM public.finance_transactions WHERE telegram_id=42"
             ).fetchone()
