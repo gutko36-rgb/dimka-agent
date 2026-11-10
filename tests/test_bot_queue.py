@@ -23,6 +23,17 @@ class FakeQuery:
         return SimpleNamespace(data=[])
 
 
+class FakeRpc:
+    def __init__(self, calls, name, params):
+        self.calls = calls
+        self.name = name
+        self.params = params
+
+    def execute(self):
+        self.calls.append(("rpc_execute", (self.name, self.params), {}))
+        return SimpleNamespace(data=[])
+
+
 class FakeSupabase:
     def __init__(self):
         self.calls = []
@@ -30,6 +41,10 @@ class FakeSupabase:
     def table(self, name):
         self.calls.append(("table", (name,), {}))
         return FakeQuery(self.calls)
+
+    def rpc(self, name, params):
+        self.calls.append(("rpc", (name, params), {}))
+        return FakeRpc(self.calls, name, params)
 
 
 class BotQueueClientTests(unittest.TestCase):
@@ -91,6 +106,20 @@ class BotQueueClientTests(unittest.TestCase):
                 idempotency_key="key",
                 expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
             )
+
+    def test_claim_inbox_uses_atomic_rpc_for_current_bot(self):
+        self.queue.claim_inbox(limit=7, lease_seconds=600)
+        self.assertIn(
+            ("rpc", ("claim_bot_messages", {"p_limit": 7, "p_lease_seconds": 600}), {}),
+            self.supabase.calls,
+        )
+
+    def test_claim_inbox_rejects_invalid_limits(self):
+        for kwargs in ({"limit": 0}, {"limit": True}, {"lease_seconds": 10}, {"lease_seconds": 3601}):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(BotQueueValidationError):
+                    self.queue.claim_inbox(**kwargs)
+        self.assertEqual(self.calls_named("rpc"), [])
 
     def test_fetch_inbox_is_scoped_to_current_bot(self):
         self.queue.fetch_inbox(limit=5)
