@@ -53,8 +53,8 @@ class LifestyleWorkflowTests(unittest.TestCase):
         history = render_habit_history(
             [{"id": 2, "title": "Ходьба", "target_per_week": 5}],
             [
-                {"habit_id": 2, "status": "done"},
-                {"habit_id": 2, "status": "skipped"},
+                {"habit_id": 2, "log_date": "2026-11-09", "status": "done"},
+                {"habit_id": 2, "log_date": "2026-11-10", "status": "skipped"},
             ],
             start_date=date(2026, 11, 3),
             end_date=date(2026, 11, 10),
