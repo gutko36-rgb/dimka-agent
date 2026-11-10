@@ -54,6 +54,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 # Токен Todoist необязателен: без него бот работает, просто не видит задачи.
 TODOIST_TOKEN = os.getenv("TODOIST_API_TOKEN")
 FINANCE_QUEUE_ENABLED = os.getenv("FINANCE_QUEUE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+PROJECTS_QUEUE_ENABLED = os.getenv("PROJECTS_QUEUE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 FINANCE_DEBT_ENABLED = os.getenv("FINANCE_DEBT_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 LIFESTYLE_AGENT_ENABLED = os.getenv("LIFESTYLE_AGENT_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 VOICE_TRANSCRIPTION_ENABLED = os.getenv("VOICE_TRANSCRIPTION_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
@@ -3754,6 +3755,48 @@ async def prepare_project_action(update: Update, context: ContextTypes.DEFAULT_T
             await update.effective_message.reply_text("Проект больше не найден. Обнови список: /projects")
             return
         items = await pj_items(user_id, project["id"])
+        if PROJECTS_QUEUE_ENABLED:
+            task_input = {
+                "project": {
+                    "id": project.get("id"),
+                    "title": project.get("title"),
+                    "status": project.get("status"),
+                    "deadline": project.get("deadline"),
+                    "goal": project.get("goal"),
+                    "description": project.get("description"),
+                    "result": project.get("result"),
+                },
+                "items": [
+                    {
+                        "id": item.get("id"),
+                        "kind": item.get("kind"),
+                        "content": item.get("content"),
+                        "due_date": item.get("due_date"),
+                        "done": item.get("done"),
+                        "created_at": item.get("created_at"),
+                    }
+                    for item in items[:500]
+                ],
+                "today": today.isoformat(),
+            }
+            queued = await db_call(lambda: primary_queue.enqueue(
+                to_bot_id="projects",
+                message_type="task",
+                payload={"task_type": "projects.summary", "input": task_input},
+                idempotency_key=f"projects-query:{update.update_id}",
+                expires_at=datetime.now(dt_timezone.utc) + timedelta(minutes=5),
+            ))
+            if queued is None:
+                await update.effective_message.reply_text(
+                    "Этот запрос по проекту уже был передан агенту проектов.",
+                    reply_markup=MAIN_MENU,
+                )
+            else:
+                await update.effective_message.reply_text(
+                    "📨 Передал запрос агенту проектов. Он подготовит сводку и пришлёт её отдельным сообщением.",
+                    reply_markup=MAIN_MENU,
+                )
+            return
         await reply_long(
             update.effective_message,
             build_project_card(project, items, today),
