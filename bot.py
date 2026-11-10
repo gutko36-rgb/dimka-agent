@@ -1582,8 +1582,8 @@ async def build_stats_text(telegram_id: int) -> str:
 
     # --- Переписка ---
     total = await safe_count("conversations", telegram_id)
-    from_user = await safe_count("conversations", role="user", telegram_id)
-    from_bot = await safe_count("conversations", role="assistant", telegram_id)
+    from_user = await safe_count("conversations", telegram_id, role="user")
+    from_bot = await safe_count("conversations", telegram_id, role="assistant")
     first_date = await edge_date("conversations", telegram_id, newest=False)
     last_date = await edge_date("conversations", telegram_id, newest=True)
     lines += [
@@ -1596,8 +1596,8 @@ async def build_stats_text(telegram_id: int) -> str:
     ]
 
     # --- Память ---
-    active = await safe_count("memories", status="active", telegram_id)
-    archived = await safe_count("memories", status="archived", telegram_id)
+    active = await safe_count("memories", telegram_id, status="active")
+    archived = await safe_count("memories", telegram_id, status="archived")
     lines += [
         "🧠 Память (memories)",
         f"Активных записей: {active}",
@@ -1637,7 +1637,7 @@ async def build_stats_text(telegram_id: int) -> str:
         f"Отправлено опросов: {surveys_total}",
     ]
     for kind in SURVEY_ORDER:
-        count = await safe_count("daily_surveys", kind=kind, telegram_id)
+        count = await safe_count("daily_surveys", telegram_id, kind=kind)
         lines.append(f"  • {SURVEYS[kind]['title']}: {count}")
     lines.append("")
 
@@ -1648,7 +1648,7 @@ async def build_stats_text(telegram_id: int) -> str:
         f"Сохранено отчётов: {reports_total}",
     ]
     for report_kind, label in (("day", "Дневных"), ("week", "Недельных"), ("month", "Месячных")):
-        count = await safe_count("analytics_reports", kind=report_kind, telegram_id)
+        count = await safe_count("analytics_reports", telegram_id, kind=report_kind)
         lines.append(f"  • {label}: {count}")
     lines.append("")
 
