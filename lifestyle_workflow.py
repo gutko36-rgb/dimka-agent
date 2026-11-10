@@ -122,8 +122,22 @@ def render_habit_history(
     if not habit_rows:
         return "Активных привычек пока нет."
     lines = [f"Привычки за {start_date.isoformat()} — {end_date.isoformat()}:", ""]
+    latest_by_day: dict[tuple[Any, Any], Mapping[str, Any]] = {}
+    ordered_logs = sorted(
+        log_rows,
+        key=lambda row: (
+            str(row.get("log_date") or ""),
+            str(row.get("created_at") or row.get("id") or ""),
+        ),
+    )
+    for row in ordered_logs:
+        latest_by_day[(row.get("habit_id"), row.get("log_date"))] = row
+
     for habit in habit_rows:
-        records = [row for row in log_rows if row.get("habit_id") == habit.get("id")]
+        records = [
+            row for (habit_id, _log_date), row in latest_by_day.items()
+            if habit_id == habit.get("id")
+        ]
         done = sum(1 for row in records if row.get("status") == "done")
         skipped = sum(1 for row in records if row.get("status") == "skipped")
         lines.append(
