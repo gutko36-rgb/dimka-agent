@@ -13,7 +13,7 @@ BotQueueClient должен получать Supabase client, аутентифи
 ## Методы
 
 - enqueue(...) — создаёт задачу/событие с sender ID из BotIdentity, адресатом, типом, JSON payload и idempotency key.
-- claim_inbox(limit=20, lease_seconds=300) — атомарно забирает доступные сообщения через RPC `claim_bot_messages`; параллельные workers не получают одну запись. Если worker упал, просроченная аренда позволяет повторить попытку; после `max_attempts` сообщение переводится в `failed`.
+- claim_inbox(limit=20, lease_seconds=300, message_type="task") — атомарно забирает сообщения выбранного типа через RPC `claim_bot_messages`; по умолчанию worker получает только `task`, главный бот может отдельно забирать `result`. Параллельные workers не получают одну запись. Если worker упал, просроченная аренда позволяет повторить попытку; после `max_attempts` сообщение переводится в `failed`.
 - fetch_inbox(limit=20) — только диагностическое чтение pending-сообщений; не использовать как механизм выдачи работы нескольким workers.
 - update_status(...) — переводит уже захваченное сообщение из `processing` в конечный статус (`completed`, `failed`, `cancelled`) и только если оно адресовано этому боту.
 
@@ -25,7 +25,7 @@ BotQueueClient должен получать Supabase client, аутентифи
 - Модуль не подключён к bot.py и не выполняет polling.
 - SQL proposal теперь содержит атомарную RPC-функцию `claim_bot_messages` с `FOR UPDATE SKIP LOCKED`, арендой (lease) и ограничением повторов. Её нужно проверить на тестовой PostgreSQL/Supabase среде до production-применения.
 - Нет второго Telegram-бота, токенов или Auth identities.
-- Unit tests используют поддельный Supabase-клиент для проверки Python-запросов. Отдельные CI integration tests применяют SQL proposal к настоящему PostgreSQL 17 и проверяют RLS, подмену отправителя, параллельный claim и повтор после истечения lease. Тестовый `auth.jwt()` — shim; это ещё не проверка реального Supabase Auth, подписанных JWT или настроек Data API.
+- Unit tests используют поддельный Supabase-клиент для проверки Python-запросов. Отдельные CI integration tests применяют SQL proposal к настоящему PostgreSQL 17 и проверяют RLS, подмену отправителя, запрет anon, выбор типа сообщения, параллельный claim и повтор после истечения lease. Тестовый `auth.jwt()` — shim; это ещё не проверка реального Supabase Auth, подписанных JWT или настроек Data API.
 
 ## Локальная проверка на Windows
 
