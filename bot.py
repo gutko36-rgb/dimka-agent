@@ -295,6 +295,9 @@ async def db_call(method, *args, **kwargs):
 
 
 
+_IDEMPOTENCY_FALLBACK_WARNED: set[str] = set()
+
+
 def is_missing_idempotency_schema_error(error: Exception) -> bool:
     """True only when an idempotency column/index has not been deployed yet."""
     code = getattr(error, "code", None)
@@ -322,10 +325,12 @@ async def idempotent_upsert(
     except Exception as error:
         if not is_missing_idempotency_schema_error(error):
             raise
-        logging.warning(
-            "Idempotency schema for %s is not deployed yet; using compatibility insert",
-            table,
-        )
+        if table not in _IDEMPOTENCY_FALLBACK_WARNED:
+            logging.warning(
+                "Idempotency schema for %s is not deployed yet; using compatibility insert",
+                table,
+            )
+            _IDEMPOTENCY_FALLBACK_WARNED.add(table)
         return await db_call(supabase.table(table).insert(legacy_payload).execute)
 
 async def ensure_profile(telegram_id: int, name: str | None = None) -> None:
