@@ -119,6 +119,29 @@ class UserDataScopingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(("id", 17), query.filters)
         self.assertIn(("telegram_id", 42), query.filters)
 
+    async def test_forecast_command_reads_only_the_current_owners_finances(self):
+        from datetime import date
+
+        captured = {}
+
+        async def capture_reply(_message, text, inline=None):
+            captured["text"] = text
+
+        update = SimpleNamespace(
+            effective_user=SimpleNamespace(id=42),
+            effective_message=SimpleNamespace(),
+        )
+        with (
+            patch.object(bot, "is_authorized", return_value=True),
+            patch.object(bot, "user_today", return_value=date(2026, 11, 10)),
+            patch.object(bot, "fin_load_payments", return_value=[]),
+            patch.object(bot, "reply_long", capture_reply),
+        ):
+            await bot.forecast_command(update, None)
+
+        self.assert_every_query_is_owner_scoped(42)
+        self.assertIn("Будущие доходы и долги пока не подключены", captured["text"])
+
     async def test_project_item_insert_refuses_project_not_owned_by_user(self):
         async def no_project(_user_id, _project_id):
             return None

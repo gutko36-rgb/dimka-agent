@@ -15,6 +15,7 @@ from groq import AsyncGroq
 from finance_agent import parse_finance_response
 from project_agent import parse_project_response
 from intent_dispatcher import dispatch_intent
+from finance_planning import forecast_balance
 from project_documents import build_project_timeline, extract_document_text, search_document_text
 from supabase import create_client, Client
 
@@ -243,6 +244,7 @@ HELP_TEXT = (
     "/expense 350 еда обед — записать расход\n"
     "/income 50000 зарплата — записать доход\n"
     "/finance или /finance week — итоги за месяц или неделю\n"
+    "/forecast или /finance forecast — прогноз остатка на 30 дней\n"
     "/fin_list — последние записи, /fin_del номер — удалить\n"
     "/payment 15000 5 Аренда — платёж каждый месяц 5-го числа\n"
     "/payments — список платежей, /payment_del номер — удалить\n"
@@ -2090,12 +2092,68 @@ async def build_purchase_facts(user_id: int, price: float, exclude_id: int) -> s
 
 # ---------- команды: записи ----------
 
+async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Read-only 30-day cash forecast from recorded transactions and recurring payments."""
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+
+    user_id = update.effective_user.id
+    try:
+        today = await user_today(user_id)
+        tx_result = await db_call(
+            supabase.table("finance_transactions")
+            .select("kind, amount, tx_date")
+            .eq("telegram_id", user_id)
+            .order("tx_date")
+            .execute
+        )
+        payments = await fin_load_payments(user_id)
+        forecast = forecast_balance(
+            tx_result.data or [],
+            payments,
+            debts=[],
+            as_of=today,
+            horizon_days=30,
+        )
+    except Exception:
+        logging.exception("Не удалось построить прогноз остатка")
+        await update.effective_message.reply_text(FIN_SQL_HINT, reply_markup=MAIN_MENU)
+        return
+
+    lines = [
+        "Прогноз остатка на 30 дней",
+        "",
+        f"Текущий расчётный остаток: {money(float(forecast.current_balance))}",
+        f"После известных регулярных платежей: {money(float(forecast.projected_balance))}",
+    ]
+    if forecast.events:
+        lines += ["", "Ожидаемые платежи:"]
+        for event in forecast.events:
+            sign = "+" if event.amount >= 0 else "−"
+            lines.append(
+                f"• {fmt_date(event.event_date.isoformat())}: "
+                f"{sign}{money(float(abs(event.amount)))} — {event.label}"
+            )
+    else:
+        lines += ["", "В ближайшие 30 дней известных регулярных платежей нет."]
+    lines += [
+        "",
+        "Важно: прогноз учитывает только уже записанные доходы/расходы и обязательные регулярные платежи.",
+        "Будущие доходы и долги пока не подключены, поэтому это консервативная оценка, а не обещание остатка.",
+    ]
+    await reply_long(update.effective_message, "\n".join(lines), inline=FIN_MENU)
+
+
 async def finance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
 
     arg = context.args[0].lower() if context.args else "month"
+    if arg in ("forecast", "прогноз"):
+        await forecast_command(update, context)
+        return
     kind = "week" if arg in ("week", "неделя") else "month"
     try:
         text, _ = await build_finance_text(update.effective_user.id, kind)
@@ -5698,6 +5756,7 @@ def main():
     app.add_handler(CommandHandler("week", week_command))
     app.add_handler(CommandHandler("month", month_command))
     app.add_handler(CommandHandler("finance", finance_command))
+    app.add_handler(CommandHandler("forecast", forecast_command))
     app.add_handler(CommandHandler("expense", expense_command))
     app.add_handler(CommandHandler("income", income_command))
     app.add_handler(CommandHandler("fin_list", fin_list_command))
