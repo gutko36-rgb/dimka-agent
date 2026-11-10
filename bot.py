@@ -12,8 +12,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 from dotenv import load_dotenv
 from groq import AsyncGroq
-from finance_agent import looks_like_finance_entry, looks_like_finance_question, parse_finance_response
-from project_agent import looks_like_project_intent, parse_project_response
+from finance_agent import parse_finance_response
+from project_agent import parse_project_response
+from intent_dispatcher import dispatch_intent
 from project_documents import build_project_timeline, extract_document_text, search_document_text
 from supabase import create_client, Client
 
@@ -4801,17 +4802,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await handler(update, ArgsContext(context, pending["prefix"] + user_message.split()))
             return
 
-    if looks_like_finance_entry(user_message):
+    decision = dispatch_intent(user_message)
+
+    if decision.action == "prepare_finance_draft":
         await update.effective_message.chat.send_action("typing")
         await prepare_finance_draft(update, context, user_message, update.update_id)
         return
 
-    if looks_like_finance_question(user_message):
+    if decision.action == "answer_finance_question":
         await update.effective_message.chat.send_action("typing")
         await answer_finance_question(update, context, user_message)
         return
 
-    if looks_like_project_intent(user_message):
+    if decision.action == "prepare_project_action":
         await update.effective_message.chat.send_action("typing")
         await prepare_project_action(update, context, user_message)
         return
