@@ -21,11 +21,11 @@ BotQueueClient должен получать Supabase client, аутентифи
 
 ## Ограничения текущего этапа
 
-- SQL из docs/sql/MULTI_BOT_QUEUE_PROPOSAL.sql ещё не применён в Supabase.
+- SQL из docs/sql/MULTI_BOT_QUEUE_PROPOSAL.sql ещё не применён в Supabase. Для новых таблиц `public` после 30 октября 2026 явные GRANT обязательны для доступа через Data API; proposal выдаёт только минимальные права `authenticated` и административные права `service_role`, не выдавая доступ `anon`.
 - Модуль не подключён к bot.py и не выполняет polling.
 - SQL proposal теперь содержит атомарную RPC-функцию `claim_bot_messages` с `FOR UPDATE SKIP LOCKED`, арендой (lease) и ограничением повторов. Её нужно проверить на тестовой PostgreSQL/Supabase среде до production-применения.
 - Нет второго Telegram-бота, токенов или Auth identities.
-- Тесты используют поддельный Supabase-клиент и проверяют формирование запросов, а не реальную базу/RLS.
+- Unit tests используют поддельный Supabase-клиент для проверки Python-запросов. Отдельные CI integration tests применяют SQL proposal к настоящему PostgreSQL 17 и проверяют RLS, подмену отправителя, параллельный claim и повтор после истечения lease. Тестовый `auth.jwt()` — shim; это ещё не проверка реального Supabase Auth, подписанных JWT или настроек Data API.
 
 ## Локальная проверка на Windows
 
