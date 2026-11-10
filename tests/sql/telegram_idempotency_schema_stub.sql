@@ -1,4 +1,4 @@
--- Disposable schema matching the tables touched by TELEGRAM_WRITE_IDEMPOTENCY_PROPOSAL.sql.
+-- Disposable schema for the applied Telegram idempotency migrations.
 create table public.conversations (
     id bigserial primary key,
     telegram_id bigint not null,
