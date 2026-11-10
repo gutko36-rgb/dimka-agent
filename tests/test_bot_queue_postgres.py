@@ -118,6 +118,10 @@ class BotQueuePostgresTests(unittest.TestCase):
                 "SELECT id FROM public.claim_bot_messages(10, 300)"
             ).fetchall()
             self.assertEqual(rows, [])
+            result_rows = conn.execute(
+                "SELECT id FROM public.claim_bot_messages(10, 300, 'result')"
+            ).fetchall()
+            self.assertEqual(len(result_rows), 1)
             conn.commit()
         finally:
             conn.close()
