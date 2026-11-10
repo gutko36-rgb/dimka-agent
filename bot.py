@@ -20,6 +20,7 @@ from finance_debt import FinanceDebtStore
 from finance_debt_telegram import build_finance_debt_handlers
 from lifestyle_agent import LifestyleStore
 from lifestyle_telegram import build_lifestyle_handlers
+from media_input import extract_image_text, transcribe_audio
 from project_documents import build_project_timeline, extract_document_text, search_document_text
 from supabase import create_client, Client
 
@@ -51,6 +52,10 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 TODOIST_TOKEN = os.getenv("TODOIST_API_TOKEN")
 FINANCE_DEBT_ENABLED = os.getenv("FINANCE_DEBT_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 LIFESTYLE_AGENT_ENABLED = os.getenv("LIFESTYLE_AGENT_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+VOICE_TRANSCRIPTION_ENABLED = os.getenv("VOICE_TRANSCRIPTION_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+GROQ_TRANSCRIPTION_MODEL = os.getenv("GROQ_TRANSCRIPTION_MODEL", "whisper-large-v3-turbo")
+VISION_OCR_ENABLED = os.getenv("VISION_OCR_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
 
 if not TELEGRAM_TOKEN or not GROQ_API_KEY or not GROQ_MODEL:
     raise RuntimeError("Не заполнены TELEGRAM_BOT_TOKEN, GROQ_API_KEY или GROQ_MODEL в .env")
@@ -3959,6 +3964,32 @@ async def handle_project_asset(update: Update, context: ContextTypes.DEFAULT_TYP
         f"✅ Материал сохранён в проект «{project['title']}». Посмотреть: /assets {project_id}",
         reply_markup=MAIN_MENU,
     )
+    if VISION_OCR_ENABLED and (mime_type or "").lower() in {"image/jpeg", "image/png", "image/webp"}:
+        try:
+            if getattr(media, "file_size", None) and media.file_size > 15 * 1024 * 1024:
+                await update.effective_message.reply_text(
+                    "Файл сохранён, но OCR пропущен: изображение больше 15 МБ."
+                )
+            else:
+                telegram_file = await context.bot.get_file(file_id)
+                image_buffer = io.BytesIO()
+                await telegram_file.download_to_memory(out=image_buffer)
+                extracted = await extract_image_text(
+                    ai,
+                    image_buffer.getvalue(),
+                    mime_type=mime_type,
+                    model=GROQ_VISION_MODEL,
+                )
+                if extracted and extracted.strip().rstrip(".") != "Текст не обнаружен":
+                    await update.effective_message.reply_text(
+                        "🧾 Текст, распознанный на изображении (проверь его перед использованием):\n\n"
+                        + clip(extracted, 3500)
+                    )
+        except Exception:
+            logging.exception("OCR изображения проекта не выполнен; сам файл уже сохранён")
+            await update.effective_message.reply_text(
+                "Файл сохранён, но распознать текст на изображении не удалось."
+            )
 
 
 # ===================== ОТВЕТ МОДЕЛИ =====================
@@ -4823,13 +4854,66 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(text, reply_markup=MAIN_MENU)
 
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update):
+        await reject_unauthorized(update)
+        return
+    if not VOICE_TRANSCRIPTION_ENABLED:
+        await update.effective_message.reply_text(
+            "Распознавание голосовых сообщений пока выключено. Оно использует Groq Speech-to-Text; "
+            "включить можно после проверки настроек."
+        )
+        return
+
+    message = update.effective_message
+    media = message.voice or message.audio
+    if not media:
+        await message.reply_text("Не удалось определить аудиофайл.")
+        return
+    if media.file_size and media.file_size > 20 * 1024 * 1024:
+        await message.reply_text("Аудиофайл больше 20 МБ. Отправь более короткое голосовое сообщение.")
+        return
+
+    filename = getattr(media, "file_name", None) or ("voice.ogg" if message.voice else "audio.mp3")
+    if filename.lower().endswith(".oga"):
+        filename = filename[:-4] + ".ogg"
+    try:
+        telegram_file = await context.bot.get_file(media.file_id)
+        audio_buffer = io.BytesIO()
+        await telegram_file.download_to_memory(out=audio_buffer)
+        transcription = await transcribe_audio(
+            ai,
+            audio_buffer.getvalue(),
+            filename=filename,
+            model=GROQ_TRANSCRIPTION_MODEL,
+            language="ru",
+        )
+    except Exception:
+        logging.exception("Не удалось распознать голосовое сообщение")
+        await message.reply_text("Не удалось распознать аудио. Попробуй отправить запись ещё раз или напиши текстом.")
+        return
+
+    if not transcription:
+        await message.reply_text("Речь не удалось распознать. Попробуй записать сообщение ещё раз.")
+        return
+
+    await message.reply_text("🎙 Распознал:\n" + clip(transcription, 1500))
+    await handle_message(update, context, text_override=transcription)
+
+
+async def handle_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text_override: str | None = None,
+):
     if not is_authorized(update):
         await reject_unauthorized(update)
         return
 
     user_id = update.effective_user.id
-    user_message = update.effective_message.text
+    user_message = text_override if text_override is not None else update.effective_message.text
+    if not user_message or not user_message.strip():
+        return
 
     if context.user_data.get("project_action_pending"):
         if user_message.strip().lower() in {"отмена", "отмени", "cancel"}:
@@ -5882,6 +5966,7 @@ def main():
     app.add_handler(CallbackQueryHandler(lifestyle_handlers["callback"], pattern=r"^life:"))
     app.add_handler(CallbackQueryHandler(ui_callback, pattern=r"^(fin|pay|buy|pj|mem|sched|tz|ui):"))
 
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice_message))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_project_asset))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
