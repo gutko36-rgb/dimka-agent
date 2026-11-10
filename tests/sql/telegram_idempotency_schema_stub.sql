@@ -73,7 +73,7 @@ create table if not exists public.finance_transactions (
     amount numeric not null,
     category text not null,
     note text,
-    date date not null
+    tx_date date not null
 );
 create table public.finance_pending_actions (
     id bigserial primary key,
