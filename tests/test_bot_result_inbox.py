@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime
 
 from bot_result_inbox import BotResultInbox, format_result_message
 
