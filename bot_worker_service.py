@@ -11,6 +11,7 @@ from typing import Any, Callable
 from bot_identity import load_bot_identity
 from bot_queue import BotQueueClient
 from bot_worker import BotWorker
+from finance_worker_handlers import build_finance_handlers
 
 
 def _field(value: Any, name: str) -> Any:
@@ -62,10 +63,12 @@ def create_authenticated_queue(
 
 
 def build_worker(queue: BotQueueClient) -> BotWorker:
-    """Bootstrap handler used to prove isolated queue delivery before domain rollout."""
+    """Build the isolated worker with diagnostics and pure finance calculations."""
+    handlers = {"diagnostics.echo": lambda payload: {"echo": payload}}
+    handlers.update(build_finance_handlers())
     return BotWorker(
         queue,
-        {"diagnostics.echo": lambda payload: {"echo": payload}},
+        handlers,
         batch_size=int(os.environ.get("BOT_WORKER_BATCH_SIZE", "10")),
     )
 
