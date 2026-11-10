@@ -126,6 +126,132 @@ class BotQueuePostgresTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_future_available_at_is_not_claimed_until_due(self):
+        conn = self.bot_connection("dimka")
+        try:
+            row = conn.execute(
+                """
+                INSERT INTO public.bot_messages
+                    (task_id, from_bot_id, to_bot_id, message_type, payload,
+                     idempotency_key, available_at)
+                VALUES
+                    (gen_random_uuid(), 'dimka', 'finance', 'task', '{}'::jsonb,
+                     'scheduled-message', now() + interval '1 hour')
+                RETURNING id
+                """
+            ).fetchone()
+            message_id = str(row[0])
+            conn.commit()
+        finally:
+            conn.close()
+
+        conn = self.bot_connection("finance")
+        try:
+            rows = conn.execute(
+                "SELECT id FROM public.claim_bot_messages(10, 300)"
+            ).fetchall()
+            self.assertEqual(rows, [])
+            conn.commit()
+        finally:
+            conn.close()
+
+        with psycopg.connect(DATABASE_URL) as admin:
+            admin.execute(
+                "UPDATE public.bot_messages SET available_at = now() - interval '1 second' WHERE id = %s",
+                (message_id,),
+            )
+
+        conn = self.bot_connection("finance")
+        try:
+            rows = conn.execute(
+                "SELECT id FROM public.claim_bot_messages(10, 300)"
+            ).fetchall()
+            self.assertEqual([str(row[0]) for row in rows], [message_id])
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_expired_pending_message_is_marked_failed(self):
+        conn = self.bot_connection("dimka")
+        try:
+            row = conn.execute(
+                """
+                INSERT INTO public.bot_messages
+                    (task_id, from_bot_id, to_bot_id, message_type, payload,
+                     idempotency_key, created_at, expires_at)
+                VALUES
+                    (gen_random_uuid(), 'dimka', 'finance', 'task', '{}'::jsonb,
+                     'expired-before-claim', now() - interval '2 minutes',
+                     now() - interval '1 minute')
+                RETURNING id
+                """
+            ).fetchone()
+            message_id = str(row[0])
+            conn.commit()
+        finally:
+            conn.close()
+
+        conn = self.bot_connection("finance")
+        try:
+            rows = conn.execute(
+                "SELECT id FROM public.claim_bot_messages(10, 300)"
+            ).fetchall()
+            self.assertEqual(rows, [])
+            conn.commit()
+        finally:
+            conn.close()
+
+        with psycopg.connect(DATABASE_URL) as admin:
+            row = admin.execute(
+                "SELECT status, last_error, completed_at FROM public.bot_messages WHERE id = %s",
+                (message_id,),
+            ).fetchone()
+            self.assertEqual(row[0], "failed")
+            self.assertEqual(row[1], "Message expired before processing")
+            self.assertIsNotNone(row[2])
+
+    def test_message_expiring_during_lease_is_not_retried(self):
+        message_id = self.enqueue_as_dimka("expires-during-lease")
+        conn = self.bot_connection("finance")
+        try:
+            first = conn.execute(
+                "SELECT id FROM public.claim_bot_messages(1, 30)"
+            ).fetchone()
+            self.assertEqual(str(first[0]), message_id)
+            conn.commit()
+        finally:
+            conn.close()
+
+        with psycopg.connect(DATABASE_URL) as admin:
+            admin.execute(
+                """
+                UPDATE public.bot_messages
+                   SET created_at = now() - interval '2 minutes',
+                       expires_at = now() - interval '1 minute',
+                       claimed_at = now() - interval '2 minutes'
+                 WHERE id = %s
+                """,
+                (message_id,),
+            )
+
+        conn = self.bot_connection("finance")
+        try:
+            rows = conn.execute(
+                "SELECT id FROM public.claim_bot_messages(1, 30)"
+            ).fetchall()
+            self.assertEqual(rows, [])
+            conn.commit()
+        finally:
+            conn.close()
+
+        with psycopg.connect(DATABASE_URL) as admin:
+            row = admin.execute(
+                "SELECT status, last_error FROM public.bot_messages WHERE id = %s",
+                (message_id,),
+            ).fetchone()
+            self.assertEqual(row[0], "failed")
+            self.assertEqual(row[1], "Message expired before processing")
+
     def test_anonymous_role_cannot_execute_worker_rpc(self):
         conn = psycopg.connect(DATABASE_URL)
         try:

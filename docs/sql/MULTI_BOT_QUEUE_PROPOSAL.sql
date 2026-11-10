@@ -200,6 +200,18 @@ begin
             using errcode = '22023';
     end if;
 
+    -- Expired messages must not remain pending/processing forever. Mark them
+    -- terminal before selecting work; this also handles messages that expired
+    -- before their first claim or while a worker held a lease.
+    update public.bot_messages as m
+       set status = 'failed',
+           completed_at = now(),
+           last_error = 'Message expired before processing'
+     where m.to_bot_id = v_bot_id
+       and m.status in ('pending', 'processing')
+       and m.expires_at is not null
+       and m.expires_at <= now();
+
     update public.bot_messages as m
        set status = 'failed',
            completed_at = now(),
@@ -216,6 +228,7 @@ begin
           from public.bot_messages as m
          where m.to_bot_id = v_bot_id
            and m.message_type = p_message_type
+           and m.available_at <= now()
            and (m.expires_at is null or m.expires_at > now())
            and m.attempt_count < m.max_attempts
            and (
