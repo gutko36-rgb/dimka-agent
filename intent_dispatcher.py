@@ -54,14 +54,31 @@ def get_agent_policy(agent_id: str) -> AgentPolicy:
         raise ValueError(f"Unknown internal agent: {agent_id}") from exc
 
 
+def _decision(
+    agent_id: str,
+    action: str,
+    capability: str,
+    confirmation_policy: ConfirmationPolicy,
+) -> IntentDecision:
+    policy = get_agent_policy(agent_id)
+    if capability not in policy.capabilities:
+        raise RuntimeError(f"Agent {agent_id} is not allowed capability {capability}")
+    if capability.endswith(".draft") and (
+        not policy.writes_require_main_bot_confirmation
+        or confirmation_policy not in {"required", "handler_enforced"}
+    ):
+        raise RuntimeError("Draft-producing agents must remain behind main-bot confirmation")
+    return IntentDecision(agent_id, action, capability, confirmation_policy)
+
+
 def dispatch_intent(message: str) -> IntentDecision:
     """Route a user message to a read-only or draft-producing internal handler."""
     text = (message or "").strip()
     if not text:
-        return IntentDecision("assistant", "chat", "assistant.chat", "not_required")
+        return _decision("assistant", "chat", "assistant.chat", "not_required")
 
     if looks_like_finance_entry(text):
-        return IntentDecision(
+        return _decision(
             "finance",
             "prepare_finance_draft",
             "finance.draft",
@@ -69,7 +86,7 @@ def dispatch_intent(message: str) -> IntentDecision:
         )
 
     if looks_like_finance_question(text):
-        return IntentDecision(
+        return _decision(
             "finance",
             "answer_finance_question",
             "finance.read",
@@ -79,7 +96,7 @@ def dispatch_intent(message: str) -> IntentDecision:
     if looks_like_project_intent(text):
         # The project parser distinguishes read-only questions from write drafts.
         # Its handler must ask for confirmation before any write.
-        return IntentDecision(
+        return _decision(
             "projects",
             "prepare_project_action",
             "projects.draft",
