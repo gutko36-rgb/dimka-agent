@@ -122,6 +122,16 @@ class BotQueuePostgresTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_anonymous_role_cannot_execute_worker_rpc(self):
+        conn = psycopg.connect(DATABASE_URL)
+        try:
+            conn.execute("SET ROLE anon")
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                conn.execute("SELECT * FROM public.claim_bot_messages(1, 300)")
+            conn.rollback()
+        finally:
+            conn.close()
+
     def test_sender_cannot_spoof_another_bot_identity(self):
         conn = self.bot_connection("dimka")
         try:
