@@ -293,7 +293,8 @@ class LifestyleStore:
             self.client.table("lifestyle_habit_logs")
             .upsert(
                 payload,
-                on_conflict="telegram_id,habit_id,log_date",
+                on_conflict="telegram_id,source_update_id",
+                ignore_duplicates=True,
             )
             .execute
         )
@@ -304,14 +305,17 @@ class LifestyleStore:
             self.client.table("lifestyle_habit_logs")
             .select("*")
             .eq("telegram_id", owner)
-            .eq("habit_id", habit_id)
-            .eq("log_date", log_date.isoformat())
+            .eq("source_update_id", update_id)
             .limit(1)
             .execute
         )
         found = _rows(existing)
         if not found:
             raise RuntimeError("Не удалось подтвердить запись привычки")
+        expected = ("habit_id", "log_date", "status", "note")
+        for key in expected:
+            if str(found[0].get(key)) != str(payload.get(key)):
+                raise ValueError("Этот Telegram update уже использован для другой отметки привычки")
         return found[0]
 
     async def list_habit_logs(
@@ -331,6 +335,7 @@ class LifestyleStore:
             .gte("log_date", start_date.isoformat())
             .lte("log_date", end_date.isoformat())
             .order("log_date")
+            .order("created_at")
             .execute
         )
         return _rows(result)
