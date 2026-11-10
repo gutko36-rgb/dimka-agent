@@ -93,7 +93,7 @@ async def extract_image_text(
             }
         ],
         temperature=0.0,
-        max_tokens=1800,
+        max_completion_tokens=1800,
     )
     choices = getattr(response, "choices", None) or []
     if not choices:
