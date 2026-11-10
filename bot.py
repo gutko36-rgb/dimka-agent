@@ -3779,13 +3779,22 @@ async def prepare_project_action(update: Update, context: ContextTypes.DEFAULT_T
                 ],
                 "today": today.isoformat(),
             }
-            queued = await db_call(lambda: primary_queue.enqueue(
-                to_bot_id="projects",
-                message_type="task",
-                payload={"task_type": "projects.summary", "input": task_input},
-                idempotency_key=f"projects-query:{update.update_id}",
-                expires_at=datetime.now(dt_timezone.utc) + timedelta(minutes=5),
-            ))
+            try:
+                queued = await db_call(lambda: primary_queue.enqueue(
+                    to_bot_id="projects",
+                    message_type="task",
+                    payload={"task_type": "projects.summary", "input": task_input},
+                    idempotency_key=f"projects-query:{update.update_id}",
+                    expires_at=datetime.now(dt_timezone.utc) + timedelta(minutes=5),
+                ))
+            except Exception:
+                logging.exception("Не удалось передать запрос агенту проектов")
+                await reply_long(
+                    update.effective_message,
+                    build_project_card(project, items, today),
+                    inline=project_card_keyboard(project["id"]),
+                )
+                return
             if queued is None:
                 await update.effective_message.reply_text(
                     "Этот запрос по проекту уже был передан агенту проектов.",
