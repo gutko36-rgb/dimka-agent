@@ -92,7 +92,7 @@ def _format_finance_result(task_type: str, body: dict[str, Any]) -> str | None:
     if task_type == "finance.budget_analysis":
         lines = [f"📋 Бюджет за {body.get('month', 'указанный месяц')}"]
         categories = body.get("categories")
-        for item in categories[:30] if isinstance(categories, list) else []:
+        for item in (categories[:30] if isinstance(categories, list) else []):
             if isinstance(item, dict):
                 status = " · ПРЕВЫШЕН" if item.get("over_budget") else ""
                 limit = item.get("limit")
