@@ -162,6 +162,45 @@ class BotResultInboxTests(unittest.TestCase):
         self.assertIn("handler_error", text)
         self.assertNotIn('"error"', text)
 
+    def test_project_summary_is_formatted_as_a_project_card(self):
+        text = format_result_message({
+            "message_type": "result",
+            "from_bot_id": "projects",
+            "payload": {
+                "task_type": "projects.summary",
+                "ok": True,
+                "result": {
+                    "project_id": 7,
+                    "title": "Пульт",
+                    "status": "active",
+                    "deadline": "2026-11-09",
+                    "project_overdue": True,
+                    "stage_progress": {"done": 1, "total": 2},
+                    "task_progress": {"done": 0, "total": 1},
+                    "overdue_items": [{"content": "Собрать корпус", "due_date": "2026-11-09"}],
+                    "upcoming_items": [{"content": "Заказать детали", "due_date": "2026-11-15"}],
+                },
+            },
+        })
+        self.assertIn("📁 Агент проектов: Пульт", text)
+        self.assertIn("Статус: В работе", text)
+        self.assertIn("ПРОСРОЧЕН", text)
+        self.assertIn("Собрать корпус", text)
+        self.assertNotIn('"task_type"', text)
+
+    def test_project_failure_uses_safe_error_code(self):
+        text = format_result_message({
+            "message_type": "result",
+            "from_bot_id": "projects",
+            "payload": {
+                "task_type": "projects.summary",
+                "ok": False,
+                "error": "handler_error",
+            },
+        })
+        self.assertIn("Агент проектов не смог обработать запрос", text)
+        self.assertIn("handler_error", text)
+
 
 if __name__ == "__main__":
     unittest.main()
