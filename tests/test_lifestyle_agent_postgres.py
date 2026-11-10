@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import unittest
+from decimal import Decimal
 from pathlib import Path
 
 try:
@@ -88,7 +89,7 @@ class LifestylePostgresTests(unittest.TestCase):
                 "SELECT count(*) FROM public.lifestyle_goal_updates WHERE telegram_id=42 AND goal_id=%s",
                 (goal_id,),
             ).fetchone()[0]
-            self.assertEqual(state, (25, "active"))
+            self.assertEqual(state, (Decimal("25.00"), "active"))
             self.assertEqual(history, 1)
 
     def test_goal_completion_updates_status_and_history(self):
@@ -101,7 +102,7 @@ class LifestylePostgresTests(unittest.TestCase):
                 "SELECT progress,status FROM public.lifestyle_goals WHERE id=%s",
                 (goal_id,),
             ).fetchone()
-            self.assertEqual(state, (100, "completed"))
+            self.assertEqual(state, (Decimal("100.00"), "completed"))
 
     def test_wrong_owner_and_reused_update_id_are_rejected(self):
         with psycopg.connect(DATABASE_URL) as conn:
