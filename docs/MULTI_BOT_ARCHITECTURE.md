@@ -1,6 +1,6 @@
 # Архитектура нескольких внутренних агентов
 
-Статус на 10.11.2026: схема очереди развернута; для `finance` создана отдельная Supabase Auth identity; worker прошёл smoke test `diagnostics.echo` и получил чистые расчётные handlers для финансовой сводки, прогноза, анализа бюджетов и распределения. Основной бот умеет опционально передавать read-only финансовые вопросы в очередь через `FINANCE_QUEUE_ENABLED=true` (по умолчанию `false`). Проектные handlers, долговременная эксплуатация worker и маршрутизация остальных финансовых действий ещё в работе.
+Статус на 10.11.2026: схема очереди развернута; finance worker с отдельной Supabase Auth identity выполняет чистые расчёты сводки, прогноза, бюджетов и распределения. Основной бот опционально маршрутизирует read-only финансовые вопросы и `/forecast` при `FINANCE_QUEUE_ENABLED=true`. Для проектов добавлен чистый handler `projects.summary` и опциональная маршрутизация статуса проекта через `PROJECTS_QUEUE_ENABLED=true`; отдельная Auth identity `projects` ещё должна быть provisioned на доверенной машине. Оба флага выключены по умолчанию.
 
 ## Цель
 
@@ -90,16 +90,18 @@ Telegram Bot API не доставляет ботам сообщения, отп
 
 Главный бот автоматически забирает `result`-сообщения через отдельную RPC `claim_bot_results_for_primary`, которая доступна только `service_role` и выбирает исключительно ответы `to_bot_id='dimka'`. Polling выполняется через Telegram JobQueue раз в 5 секунд. После успешной отправки в личный чат статус меняется на `completed`; при временной ошибке сообщение остаётся повторно доступным после истечения lease. Это не смешивает задачи worker и ответы основному боту.
 
-Worker запускается отдельным процессом через `bot_worker_service.py` и может работать постоянно либо обрабатывать одну пачку (`--once`). Он аутентифицируется собственной Supabase Auth identity и проверяет `app_metadata.bot_id` до создания `BotQueueClient`. В `build_worker()` зарегистрированы `diagnostics.echo` и четыре чистых финансовых обработчика: `finance.summary`, `finance.forecast`, `finance.budget_analysis`, `finance.distribution`. Основной бот отправляет `finance.summary` для текстовых финансовых вопросов и `finance.forecast` для `/forecast` в очередь только при `FINANCE_QUEUE_ENABLED=true`; анализ бюджетов и распределение пока доступны как handlers, но ещё не маршрутизируются из Telegram.
+Worker запускается отдельным процессом через `bot_worker_service.py` и может работать постоянно либо обрабатывать одну пачку (`--once`). Он аутентифицируется собственной Supabase Auth identity и проверяет `app_metadata.bot_id` до создания `BotQueueClient`. В `build_worker()` набор обработчиков ограничен точным `bot_id`: finance получает `diagnostics.echo` и `finance.summary`, `finance.forecast`, `finance.budget_analysis`, `finance.distribution`; projects получает `diagnostics.echo` и `projects.summary`. Основной бот отправляет `finance.summary` для текстовых финансовых вопросов и `finance.forecast` для `/forecast` при `FINANCE_QUEUE_ENABLED=true`; `projects.summary` — для чтения карточки проекта при `PROJECTS_QUEUE_ENABLED=true`.
 
 ## Текущие границы
 
 - Схема очереди уже применена в Supabase; миграция хранится в `supabase/migrations/20261110035645_multi_bot_queue.sql`.
 - Для `finance` создана отдельная Supabase Auth identity/JWT; registry содержит активные `dimka` и `finance`.
 - Результатный inbox подключён к `bot.py`; polling результатов выполняется основным Telegram-процессом раз в 5 секунд.
-- Worker запускается отдельно и не использует Telegram polling; зарегистрированы `diagnostics.echo` и четыре чистых финансовых расчётных handler.
-- Read-only финансовые вопросы можно направить через очередь флагом `FINANCE_QUEUE_ENABLED=true`. Основной бот сначала ограничивает строки по Telegram ID владельца и передаёт worker только необходимые поля; worker не читает пользовательские таблицы.
-- Финансовые черновики/записи и проектные действия остаются в основном боте и сохраняют явное подтверждение владельца; отдельный project worker пока не реализован.
+- Worker запускается отдельно и не использует Telegram polling; каждый `bot_id` получает только свой allowlist handlers.
+- Finance identity уже provisioned. Projects identity ещё не создана; для её запуска предусмотрен отдельный приватный `.env.worker.projects`.
+- Перед отправкой задачи основной бот проверяет владельца и выбирает только принадлежащие ему строки проекта/финансов. Worker не читает пользовательские таблицы и не получает Telegram ID.
+- `finance.summary`, `finance.forecast` и `projects.summary` доступны через очередь только при соответствующих флагах; оба worker-процесса должны быть запущены отдельно.
+- Финансовые черновики/записи и проектные изменения остаются в основном боте и требуют явного подтверждения владельца.
 - Telegram polling и production-поведение главного Димки не менялись.
 - `BOT_COORDINATION_CHAT_ID` остаётся каналом видимых человеку уведомлений, а не транспортом задач.
 

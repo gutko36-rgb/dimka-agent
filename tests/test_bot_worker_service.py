@@ -146,7 +146,16 @@ class WorkerServiceTests(unittest.TestCase):
         )
         worker = build_worker(queue)
 
-        self.assertEqual(set(worker.handlers), {"diagnostics.echo"})
+        self.assertEqual(
+            set(worker.handlers),
+            {"diagnostics.echo", "projects.summary"},
+        )
+        result = worker.handlers["projects.summary"]({
+            "today": "2026-11-10",
+            "project": {"title": "Пульт", "status": "active"},
+            "items": [],
+        })
+        self.assertEqual(result["title"], "Пульт")
 
 
 if __name__ == "__main__":
