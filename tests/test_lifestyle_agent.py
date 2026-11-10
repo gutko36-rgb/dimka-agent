@@ -126,7 +126,7 @@ class LifestyleStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["target_per_week"], 5)
         self.assertEqual(payload["start_date"], "2026-11-10")
 
-    async def test_habit_log_checks_owner_and_is_idempotent_by_day(self):
+    async def test_habit_log_checks_owner_and_is_idempotent_by_update(self):
         self.client.results[("lifestyle_habits", "select")] = [{
             "id": 7, "telegram_id": 42, "is_active": True
         }]
@@ -139,9 +139,28 @@ class LifestyleStoreTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(row["id"], 9)
         upsert = [q for q in self.client.calls if q.name == "lifestyle_habit_logs"][-1]
-        self.assertEqual(upsert.options["on_conflict"], "telegram_id,habit_id,log_date")
+        self.assertEqual(upsert.options["on_conflict"], "telegram_id,source_update_id")
+        self.assertTrue(upsert.options["ignore_duplicates"])
         self.assertEqual(upsert.payload["telegram_id"], 42)
         self.assertEqual(upsert.payload["source_update_id"], 1004)
+
+    async def test_reused_habit_log_update_id_cannot_change_payload(self):
+        self.client.results[("lifestyle_habits", "select")] = [{
+            "id": 7, "telegram_id": 42, "is_active": True
+        }]
+        self.client.results[("lifestyle_habit_logs", "upsert")] = []
+        self.client.results[("lifestyle_habit_logs", "select")] = [{
+            "id": 9, "telegram_id": 42, "habit_id": 7,
+            "log_date": "2026-11-10", "status": "done", "note": "Walk",
+        }]
+        with self.assertRaises(ValueError):
+            await self.store.log_habit(
+                42, 7, log_date=date(2026, 11, 10), status="skipped",
+                note="Changed payload", source_update_id=1004
+            )
+        query = self.client.calls[-1]
+        self.assertIn(("telegram_id", 42), query.filters)
+        self.assertIn(("source_update_id", 1004), query.filters)
 
     async def test_habit_log_rejects_foreign_or_inactive_habit(self):
         self.client.results[("lifestyle_habits", "select")] = []
