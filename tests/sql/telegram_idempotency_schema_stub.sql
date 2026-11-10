@@ -80,11 +80,23 @@ create table public.finance_pending_actions (
     telegram_id bigint not null,
     source_update_id bigint not null,
     payload jsonb not null,
-    status text not null default 'pending'
+    status text not null default 'pending',
+    created_at timestamptz not null default now(),
+    expires_at timestamptz not null default (now() + interval '30 minutes'),
+    processed_at timestamptz,
+    unique (telegram_id, source_update_id)
 );
 create table public.agent_project_assets (
     id bigserial primary key,
     telegram_id bigint not null,
     project_id bigint not null,
-    telegram_file_unique_id text not null
+    telegram_file_id text not null default 'file',
+    telegram_file_unique_id text not null,
+    media_type text not null default 'document',
+    file_name text,
+    mime_type text,
+    caption text,
+    source_message_id bigint,
+    created_at timestamptz not null default now(),
+    unique (telegram_id, telegram_file_unique_id)
 );
