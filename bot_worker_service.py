@@ -12,6 +12,7 @@ from bot_identity import load_bot_identity
 from bot_queue import BotQueueClient
 from bot_worker import BotWorker
 from finance_worker_handlers import build_finance_handlers
+from project_worker_handlers import build_project_handlers
 
 
 def _field(value: Any, name: str) -> Any:
@@ -67,6 +68,8 @@ def build_worker(queue: BotQueueClient) -> BotWorker:
     handlers = {"diagnostics.echo": lambda payload: {"echo": payload}}
     if queue.identity.bot_id == "finance":
         handlers.update(build_finance_handlers())
+    elif queue.identity.bot_id == "projects":
+        handlers.update(build_project_handlers())
     return BotWorker(
         queue,
         handlers,
@@ -84,7 +87,8 @@ def main() -> int:
 
     try:
         from dotenv import load_dotenv
-        load_dotenv('.env.worker', override=False)
+        env_file = os.environ.get("BOT_WORKER_ENV_FILE", ".env.worker").strip() or ".env.worker"
+        load_dotenv(env_file, override=False)
         queue, client = create_authenticated_queue()
         worker = build_worker(queue)
     except Exception as exc:
