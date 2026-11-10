@@ -36,7 +36,6 @@ BotQueueClient должен получать Supabase client, аутентифи
 
 Ожидаемый результат: 10 tests ... OK. Это не запускает Telegram и не меняет Supabase.
 
-
 ## Универсальный worker
 
 Файл `bot_worker.py` содержит общий исполнитель задач. Он:
