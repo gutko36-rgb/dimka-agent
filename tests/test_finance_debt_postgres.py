@@ -26,7 +26,7 @@ class FinanceDebtBudgetPostgresTests(unittest.TestCase):
     def setUpClass(cls):
         with psycopg.connect(DATABASE_URL) as conn:
             conn.execute((ROOT / "tests/sql/finance_debt_schema_stub.sql").read_text(encoding="utf-8"))
-            conn.execute((ROOT / "supabase/migrations/20261110120000_finance_debt_budget.sql").read_text(encoding="utf-8"))
+            conn.execute((ROOT / "supabase/migrations/20261110110125_finance_debt_budget.sql").read_text(encoding="utf-8"))
             conn.execute("GRANT ALL ON TABLE public.finance_transactions TO service_role")
             conn.execute("GRANT USAGE, SELECT ON SEQUENCE public.finance_transactions_id_seq TO service_role")
 
