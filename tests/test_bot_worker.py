@@ -75,7 +75,10 @@ class BotWorkerTests(unittest.TestCase):
         result = worker.run_once()
 
         self.assertEqual(result.failed, 1)
-        self.assertEqual(queue.enqueued, [])
+        self.assertEqual(queue.enqueued[0]["to_bot_id"], "dimka")
+        self.assertEqual(queue.enqueued[0]["payload"], {
+            "task_type": "unknown", "ok": False, "error": "unknown_task_type"
+        })
         self.assertEqual(queue.status_updates[0]["last_error"], "unknown_task_type")
 
     def test_invalid_payload_is_failed(self):
@@ -85,7 +88,9 @@ class BotWorkerTests(unittest.TestCase):
         result = worker.run_once()
 
         self.assertEqual(result.failed, 1)
-        self.assertEqual(queue.enqueued, [])
+        self.assertEqual(queue.enqueued[0]["payload"], {
+            "task_type": "math.add", "ok": False, "error": "invalid_task_message"
+        })
         self.assertEqual(queue.status_updates[0]["last_error"], "invalid_task_message")
 
     def test_handler_exception_is_failed_without_leaking_exception_text(self):
@@ -99,6 +104,10 @@ class BotWorkerTests(unittest.TestCase):
 
         self.assertEqual(result.failed, 1)
         self.assertEqual(queue.status_updates[0]["last_error"], "handler_error")
+        self.assertEqual(queue.enqueued[0]["payload"], {
+            "task_type": "math.add", "ok": False, "error": "handler_error"
+        })
+        self.assertNotIn("secret-token", str(queue.enqueued))
         self.assertNotIn("secret-token", str(queue.status_updates))
 
     def test_hop_limit_prevents_reply(self):
@@ -108,11 +117,22 @@ class BotWorkerTests(unittest.TestCase):
         result = worker.run_once()
 
         self.assertEqual(result.failed, 1)
-        self.assertEqual(queue.enqueued, [])
+        self.assertEqual(queue.enqueued[0]["payload"]["error"], "hop_limit_exceeded")
+        self.assertEqual(queue.enqueued[0]["hop_count"], 8)
         self.assertEqual(queue.status_updates[0]["last_error"], "hop_limit_exceeded")
 
     def test_result_delivery_failure_leaves_message_for_lease_retry(self):
         queue = FakeQueue([task_message()])
+        queue.fail_enqueue = True
+        worker = BotWorker(queue, {"math.add": lambda data: {"sum": 5}})
+
+        result = worker.run_once()
+
+        self.assertEqual(result.deferred, 1)
+        self.assertEqual(queue.status_updates, [])
+
+    def test_failure_result_delivery_failure_keeps_task_retryable(self):
+        queue = FakeQueue([task_message(payload={"task_type": "unknown", "input": {}})])
         queue.fail_enqueue = True
         worker = BotWorker(queue, {"math.add": lambda data: {"sum": 5}})
 

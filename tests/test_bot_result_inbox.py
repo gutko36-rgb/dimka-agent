@@ -104,6 +104,64 @@ class BotResultInboxTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             format_result_message({"message_type": "task", "from_bot_id": "finance", "payload": {}})
 
+    def test_finance_summary_is_formatted_as_readable_russian_text(self):
+        text = format_result_message({
+            "message_type": "result",
+            "from_bot_id": "finance",
+            "payload": {
+                "task_type": "finance.summary",
+                "ok": True,
+                "result": {
+                    "period_label": "за текущий месяц",
+                    "income": "10000.00",
+                    "expense": "3500.00",
+                    "difference": "6500.00",
+                    "count": 3,
+                    "expense_categories": [{"category": "Еда", "amount": "3000.00"}],
+                },
+            },
+        })
+        self.assertIn("📊 Финансовый агент", text)
+        self.assertIn("Доходы: 10000.00 ₽", text)
+        self.assertIn("Расходы: 3500.00 ₽", text)
+        self.assertIn("Еда: 3000.00 ₽", text)
+        self.assertNotIn('"task_type"', text)
+
+    def test_finance_forecast_is_formatted_readably(self):
+        text = format_result_message({
+            "message_type": "result",
+            "from_bot_id": "finance",
+            "payload": {
+                "task_type": "finance.forecast",
+                "ok": True,
+                "result": {
+                    "as_of": "2026-11-10",
+                    "until": "2026-12-10",
+                    "current_balance": "90000.00",
+                    "projected_balance": "65000.00",
+                    "events": [{"date": "2026-11-15", "label": "Аренда", "amount": "-20000.00"}],
+                    "note": "По записям",
+                },
+            },
+        })
+        self.assertIn("Прогноз от финансового агента", text)
+        self.assertIn("90000.00 ₽", text)
+        self.assertIn("Аренда", text)
+
+    def test_finance_failure_shows_safe_error_code_without_json(self):
+        text = format_result_message({
+            "message_type": "result",
+            "from_bot_id": "finance",
+            "payload": {
+                "task_type": "finance.summary",
+                "ok": False,
+                "error": "handler_error",
+            },
+        })
+        self.assertIn("Финансовый агент не смог обработать запрос", text)
+        self.assertIn("handler_error", text)
+        self.assertNotIn('"error"', text)
+
 
 if __name__ == "__main__":
     unittest.main()

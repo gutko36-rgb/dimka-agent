@@ -139,6 +139,15 @@ class WorkerServiceTests(unittest.TestCase):
         self.assertEqual(result["income"], "1000.00")
         self.assertEqual(result["expense"], "250.00")
 
+    def test_non_finance_worker_does_not_receive_finance_handlers(self):
+        queue = BotQueueClient(
+            object(),
+            BotIdentity("projects", "projects", "Агент проектов"),
+        )
+        worker = build_worker(queue)
+
+        self.assertEqual(set(worker.handlers), {"diagnostics.echo"})
+
 
 if __name__ == "__main__":
     unittest.main()
