@@ -39,7 +39,7 @@ Write-Host "Запускаю Димку и $($Workers.Count) worker-процес
 Start-Process -FilePath $Python -ArgumentList @("bot.py") -WorkingDirectory $Root
 foreach ($Worker in $Workers) {
     $EnvPath = $Worker.Env.Replace("'", "''")
-    $Command = "$env:BOT_WORKER_ENV_FILE='$EnvPath'; & '$Python' '$WorkerScript'"
+    $Command = "`$env:BOT_WORKER_ENV_FILE='$EnvPath'; & '$Python' '$WorkerScript'"
     Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoExit", "-ExecutionPolicy", "Bypass", "-Command", $Command) -WorkingDirectory $Root
     Write-Host "Запущен worker: $($Worker.Id)" -ForegroundColor Green
 }
