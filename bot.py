@@ -16,6 +16,8 @@ from finance_agent import parse_finance_response
 from project_agent import parse_project_response
 from intent_dispatcher import dispatch_intent
 from bot_result_inbox import BotResultInbox, format_result_message
+from bot_identity import BotIdentity
+from bot_queue import BotQueueClient
 from finance_planning import forecast_balance
 from finance_debt import FinanceDebtStore
 from finance_debt_telegram import build_finance_debt_handlers
@@ -51,6 +53,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 # Токен Todoist необязателен: без него бот работает, просто не видит задачи.
 TODOIST_TOKEN = os.getenv("TODOIST_API_TOKEN")
+FINANCE_QUEUE_ENABLED = os.getenv("FINANCE_QUEUE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 FINANCE_DEBT_ENABLED = os.getenv("FINANCE_DEBT_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 LIFESTYLE_AGENT_ENABLED = os.getenv("LIFESTYLE_AGENT_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 VOICE_TRANSCRIPTION_ENABLED = os.getenv("VOICE_TRANSCRIPTION_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
@@ -74,6 +77,10 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 ai = AsyncGroq(api_key=GROQ_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+primary_queue = BotQueueClient(
+    supabase,
+    BotIdentity("dimka", "personal_assistant", "Димка"),
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -4501,6 +4508,7 @@ async def answer_finance_question(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     message: str,
+    source_update_id: int,
 ):
     """Read-only natural-language finance query. All totals are calculated from Supabase rows."""
     user_id = update.effective_user.id
@@ -4629,7 +4637,6 @@ async def answer_finance_question(
                 )
             ]
 
-        income, expense = sum_by_kind(rows)
         period_label = {
             "day": "сегодня",
             "week": "за текущую неделю",
@@ -4637,6 +4644,44 @@ async def answer_finance_question(
             "all": "за всё время",
             "custom": f"с {fmt_date(start.isoformat())} по {fmt_date(end.isoformat())}",
         }[period]
+
+        if FINANCE_QUEUE_ENABLED:
+            task_input = {
+                "transactions": [
+                    {
+                        "kind": row.get("kind"),
+                        "amount": row.get("amount"),
+                        "category": row.get("category"),
+                        "note": row.get("note"),
+                        "tx_date": row.get("tx_date"),
+                    }
+                    for row in rows
+                ],
+                "kind": kind,
+                "period_label": period_label,
+                "project_title": project_title,
+                "search_terms": terms,
+            }
+            queued = await db_call(lambda: primary_queue.enqueue(
+                to_bot_id="finance",
+                message_type="task",
+                payload={"task_type": "finance.summary", "input": task_input},
+                idempotency_key=f"finance-query:{source_update_id}",
+                expires_at=datetime.now(dt_timezone.utc) + timedelta(minutes=5),
+            ))
+            if queued is None:
+                await update.effective_message.reply_text(
+                    "Этот запрос уже был передан финансовому агенту. Повторно задачу не создавал.",
+                    reply_markup=MAIN_MENU,
+                )
+            else:
+                await update.effective_message.reply_text(
+                    "📨 Передал запрос финансовому агенту. Он проверит записи и пришлёт расчёт отдельным сообщением.",
+                    reply_markup=MAIN_MENU,
+                )
+            return
+
+        income, expense = sum_by_kind(rows)
         lines = [f"📊 По сохранённым операциям {period_label}:"]
         if project_title:
             lines.append(f"Проект: {project_title}")
@@ -4984,7 +5029,7 @@ async def handle_message(
 
     if decision.action == "answer_finance_question":
         await update.effective_message.chat.send_action("typing")
-        await answer_finance_question(update, context, user_message)
+        await answer_finance_question(update, context, user_message, update.update_id)
         return
 
     if decision.action == "prepare_project_action":
