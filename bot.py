@@ -2146,6 +2146,59 @@ async def forecast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await FinanceDebtStore(supabase, db_call).list_debts(user_id)
             if FINANCE_DEBT_ENABLED else []
         )
+        if FINANCE_QUEUE_ENABLED:
+            task_input = {
+                "transactions": [
+                    {
+                        "kind": row.get("kind"),
+                        "amount": row.get("amount"),
+                        "tx_date": row.get("tx_date"),
+                    }
+                    for row in (tx_result.data or [])
+                ],
+                "recurring_payments": [
+                    {
+                        "title": str(payment.get("title") or "Регулярный платёж")[:120],
+                        "amount": payment.get("amount"),
+                        "day_of_month": payment.get("day_of_month"),
+                    }
+                    for payment in payments
+                ],
+                "debts": [
+                    {
+                        "direction": debt.get("direction"),
+                        "counterparty": (
+                            "Погашение долга"
+                            if debt.get("direction") == "owed_by_me"
+                            else "Ожидаемый возврат долга"
+                        ),
+                        "amount_remaining": debt.get("amount_remaining") or debt.get("amount"),
+                        "due_date": debt.get("due_date"),
+                        "status": debt.get("status"),
+                    }
+                    for debt in debts
+                ],
+                "as_of": today.isoformat(),
+                "horizon_days": 30,
+            }
+            queued = await db_call(lambda: primary_queue.enqueue(
+                to_bot_id="finance",
+                message_type="task",
+                payload={"task_type": "finance.forecast", "input": task_input},
+                idempotency_key=f"finance-forecast:{update.update_id}",
+                expires_at=datetime.now(dt_timezone.utc) + timedelta(minutes=5),
+            ))
+            if queued is None:
+                await update.effective_message.reply_text(
+                    "Этот прогноз уже был передан финансовому агенту. Повторно задачу не создавал.",
+                    reply_markup=MAIN_MENU,
+                )
+            else:
+                await update.effective_message.reply_text(
+                    "📨 Передал прогноз финансовому агенту. Он пришлёт расчёт отдельным сообщением.",
+                    reply_markup=MAIN_MENU,
+                )
+            return
         forecast = forecast_balance(
             tx_result.data or [],
             payments,
