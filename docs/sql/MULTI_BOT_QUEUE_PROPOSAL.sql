@@ -165,9 +165,12 @@ create policy bot_messages_update_recipient
 -- RLS remains active, and the caller can only claim rows addressed to its
 -- trusted app_metadata.bot_id. Expired leases are retried; exhausted messages
 -- are marked failed instead of remaining stuck forever.
+drop function if exists public.claim_bot_messages(integer, integer);
+
 create or replace function public.claim_bot_messages(
     p_limit integer default 20,
-    p_lease_seconds integer default 300
+    p_lease_seconds integer default 300,
+    p_message_type text default 'task'
 )
 returns setof public.bot_messages
 language plpgsql
@@ -192,13 +195,17 @@ begin
         raise exception 'p_lease_seconds must be between 30 and 3600'
             using errcode = '22023';
     end if;
+    if p_message_type not in ('task', 'result', 'status', 'event', 'approval_request') then
+        raise exception 'Unsupported p_message_type'
+            using errcode = '22023';
+    end if;
 
     update public.bot_messages as m
        set status = 'failed',
            completed_at = now(),
            last_error = 'Claim lease expired; maximum attempts reached'
      where m.to_bot_id = v_bot_id
-       and m.message_type = 'task'
+       and m.message_type = p_message_type
        and m.status = 'processing'
        and m.claimed_at < now() - pg_catalog.make_interval(secs => p_lease_seconds)
        and m.attempt_count >= m.max_attempts;
@@ -235,8 +242,8 @@ begin
 end;
 $function$;
 
-revoke all on function public.claim_bot_messages(integer, integer) from public, anon;
-grant execute on function public.claim_bot_messages(integer, integer) to authenticated;
+revoke all on function public.claim_bot_messages(integer, integer, text) from public, anon;
+grant execute on function public.claim_bot_messages(integer, integer, text) to authenticated;
 
 -- Server-side administration is reserved for trusted backend operations.
 -- Never place this key in a bot's environment if that bot is not the trusted
