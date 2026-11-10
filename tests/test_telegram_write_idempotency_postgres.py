@@ -145,7 +145,7 @@ class TelegramWriteIdempotencyPostgresTests(unittest.TestCase):
             )
             with self.assertRaises(psycopg.errors.UniqueViolation):
                 conn.execute(
-                    "INSERT INTO public.finance_transactions (telegram_id,source_update_id,source_item_index,kind,amount,category,date) VALUES (42,9006,0,'expense',10,'food','2026-11-10')"
+                    "INSERT INTO public.finance_transactions (telegram_id,source_update_id,source_item_index,kind,amount,category,tx_date) VALUES (42,9006,0,'expense',10,'food','2026-11-10')"
                 )
             conn.rollback()
             conn.execute(
