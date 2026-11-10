@@ -195,7 +195,7 @@ begin
         raise exception 'p_lease_seconds must be between 30 and 3600'
             using errcode = '22023';
     end if;
-    if p_message_type not in ('task', 'result', 'status', 'event', 'approval_request') then
+    if p_message_type is null or p_message_type not in ('task', 'result', 'status', 'event', 'approval_request') then
         raise exception 'Unsupported p_message_type'
             using errcode = '22023';
     end if;
@@ -215,7 +215,7 @@ begin
         select m.id
           from public.bot_messages as m
          where m.to_bot_id = v_bot_id
-           and m.message_type = 'task'
+           and m.message_type = p_message_type
            and (m.expires_at is null or m.expires_at > now())
            and m.attempt_count < m.max_attempts
            and (
