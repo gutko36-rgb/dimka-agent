@@ -40,9 +40,17 @@ class BotWorker:
         if any(not isinstance(name, str) or not name.strip() or not callable(fn)
                for name, fn in handlers.items()):
             raise ValueError("Each handler needs a non-empty name and callable")
-        if not 1 <= batch_size <= 100:
+        if (
+            not isinstance(batch_size, int)
+            or isinstance(batch_size, bool)
+            or not 1 <= batch_size <= 100
+        ):
             raise ValueError("batch_size must be between 1 and 100")
-        if not 30 <= lease_seconds <= 3600:
+        if (
+            not isinstance(lease_seconds, int)
+            or isinstance(lease_seconds, bool)
+            or not 30 <= lease_seconds <= 3600
+        ):
             raise ValueError("lease_seconds must be between 30 and 3600")
         self.queue = queue
         self.handlers = dict(handlers)
@@ -113,11 +121,14 @@ class BotWorker:
                     parent_message_id=message_id,
                     hop_count=hop_count + 1,
                 )
-                self.queue.update_status(
+                updated = self.queue.update_status(
                     message_id=message_id,
                     status="completed",
                 )
-                completed += 1
+                if updated:
+                    completed += 1
+                else:
+                    deferred += 1
             except Exception:
                 # Leave the lease in place. A later claim retries the task, and the
                 # deterministic result idempotency key prevents duplicate replies.
@@ -162,11 +173,11 @@ class BotWorker:
         if not isinstance(message_id, str) or not message_id.strip():
             return False
         try:
-            self.queue.update_status(
+            updated = self.queue.update_status(
                 message_id=message_id,
                 status="failed",
                 last_error=reason,
             )
-            return True
+            return bool(updated)
         except Exception:
             return False
