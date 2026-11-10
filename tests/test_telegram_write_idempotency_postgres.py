@@ -141,11 +141,11 @@ class TelegramWriteIdempotencyPostgresTests(unittest.TestCase):
     def test_existing_transaction_pending_action_and_asset_keys_remain_unique(self):
         with psycopg.connect(DATABASE_URL) as conn:
             conn.execute(
-                "INSERT INTO public.finance_transactions (telegram_id,source_update_id,source_item_index,kind,amount,category,date) VALUES (42,9006,0,'expense',10,'food','2026-11-10')"
+                "INSERT INTO public.finance_transactions (telegram_id,source_update_id,source_item_index,kind,amount,category,tx_date) VALUES (42,9006,0,'expense',10,'food','2026-11-10')"
             )
             with self.assertRaises(psycopg.errors.UniqueViolation):
                 conn.execute(
-                    "INSERT INTO public.finance_transactions (telegram_id,source_update_id,source_item_index,kind,amount,category,date) VALUES (42,9006,0,'expense',10,'food','2026-11-10')"
+                    "INSERT INTO public.finance_transactions (telegram_id,source_update_id,source_item_index,kind,amount,category,tx_date) VALUES (42,9006,0,'expense',10,'food','2026-11-10')"
                 )
             conn.rollback()
             conn.execute(
