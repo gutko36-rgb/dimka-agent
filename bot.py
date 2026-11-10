@@ -294,6 +294,45 @@ async def db_call(method, *args, **kwargs):
     return await asyncio.to_thread(lambda: method(*args, **kwargs))
 
 
+
+_IDEMPOTENCY_FALLBACK_WARNED: set[str] = set()
+
+
+def is_missing_idempotency_schema_error(error: Exception) -> bool:
+    """True only when an idempotency column/index has not been deployed yet."""
+    code = getattr(error, "code", None)
+    message = str(error).lower()
+    return (
+        code in {"PGRST204", "42703", "42P10"}
+        or "could not find the" in message and "column" in message
+        or "no unique or exclusion constraint matching the on conflict" in message
+    )
+
+
+async def idempotent_upsert(
+    table: str,
+    payload: dict,
+    on_conflict: str,
+    legacy_payload: dict,
+):
+    """Use the new unique key; temporarily preserve old behavior before its SQL is deployed."""
+    try:
+        return await db_call(
+            supabase.table(table)
+            .upsert(payload, on_conflict=on_conflict, ignore_duplicates=True)
+            .execute
+        )
+    except Exception as error:
+        if not is_missing_idempotency_schema_error(error):
+            raise
+        if table not in _IDEMPOTENCY_FALLBACK_WARNED:
+            logging.warning(
+                "Idempotency schema for %s is not deployed yet; using compatibility insert",
+                table,
+            )
+            _IDEMPOTENCY_FALLBACK_WARNED.add(table)
+        return await db_call(supabase.table(table).insert(legacy_payload).execute)
+
 async def ensure_profile(telegram_id: int, name: str | None = None) -> None:
     row = {"telegram_id": telegram_id}
     if name:
@@ -323,15 +362,33 @@ async def load_history(telegram_id: int, limit: int = 12) -> list[dict]:
     ]
 
 
-async def save_message(telegram_id: int, role: str, content: str) -> None:
-    await db_call(
-        supabase.table("conversations")
-        .insert({
-            "telegram_id": telegram_id,
-            "role": role,
-            "content": content,
-        })
-        .execute
+async def save_message(
+    telegram_id: int,
+    role: str,
+    content: str,
+    *,
+    source_update_id: int | None = None,
+    source_item_index: int = 0,
+) -> None:
+    legacy_payload = {
+        "telegram_id": telegram_id,
+        "role": role,
+        "content": content,
+    }
+    if source_update_id is None:
+        await db_call(supabase.table("conversations").insert(legacy_payload).execute)
+        return
+
+    payload = {
+        **legacy_payload,
+        "source_update_id": source_update_id,
+        "source_item_index": source_item_index,
+    }
+    await idempotent_upsert(
+        "conversations",
+        payload,
+        "telegram_id,source_update_id,source_item_index",
+        legacy_payload,
     )
 
 
@@ -584,17 +641,23 @@ def clip(text: str | None, limit: int = 1500) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-async def create_survey(telegram_id: int, kind: str, question: str, local_date: str) -> None:
-    await db_call(
-        supabase.table("daily_surveys")
-        .insert({
-            "telegram_id": telegram_id,
-            "survey_date": local_date,
-            "kind": kind,
-            "question": question,
-        })
-        .execute
+async def create_survey(
+    telegram_id: int, kind: str, question: str, local_date: str
+) -> dict | None:
+    payload = {
+        "telegram_id": telegram_id,
+        "survey_date": local_date,
+        "kind": kind,
+        "question": question,
+    }
+    result = await idempotent_upsert(
+        "daily_surveys",
+        payload,
+        "telegram_id,survey_date,kind",
+        payload,
     )
+    rows = result.data or []
+    return rows[0] if rows else None
 
 
 async def get_open_survey(telegram_id: int) -> dict | None:
@@ -628,21 +691,47 @@ async def load_day_surveys(telegram_id: int, survey_date: str) -> list[dict]:
     return result.data or []
 
 
-async def record_survey_answer(telegram_id: int, survey: dict, user_message: str, ai_answer: str) -> None:
-    """Дописываем сообщение пользователя к ответу на опрос и сохраняем вывод ИИ."""
+async def record_survey_answer(
+    telegram_id: int,
+    survey: dict,
+    user_message: str,
+    ai_answer: str,
+    *,
+    source_update_id: int | None = None,
+) -> None:
+    """Дописываем ответ; повтор того же Telegram update не добавляет текст второй раз."""
+    if source_update_id is not None and survey.get("last_answer_update_id") == source_update_id:
+        return
+
     old_answer = survey.get("answer") or ""
     new_answer = (old_answer + "\n" + user_message).strip()
-    await db_call(
+    payload = {
+        "answer": new_answer,
+        "summary": ai_answer,
+        "answered_at": datetime.now(dt_timezone.utc).isoformat(),
+    }
+    if source_update_id is not None:
+        payload["last_answer_update_id"] = source_update_id
+
+    query = (
         supabase.table("daily_surveys")
-        .update({
-            "answer": new_answer,
-            "summary": ai_answer,
-            "answered_at": datetime.now(dt_timezone.utc).isoformat(),
-        })
+        .update(payload)
         .eq("id", survey["id"])
         .eq("telegram_id", telegram_id)
-        .execute
     )
+    try:
+        await db_call(query.execute)
+    except Exception as error:
+        if "last_answer_update_id" not in payload or not is_missing_idempotency_schema_error(error):
+            raise
+        payload.pop("last_answer_update_id", None)
+        await db_call(
+            supabase.table("daily_surveys")
+            .update(payload)
+            .eq("id", survey["id"])
+            .eq("telegram_id", telegram_id)
+            .execute
+        )
 
 
 async def build_survey_context(user_id: int, survey: dict) -> str:
@@ -684,19 +773,42 @@ async def build_survey_context(user_id: int, survey: dict) -> str:
 
 
 async def deliver_survey(bot, kind: str) -> None:
-    """Отправляем вопрос и заводим запись об опросе."""
-    settings = await load_settings(ALLOWED_TELEGRAM_USER_ID)
+    """Создаём один опрос на дату/тип и только затем отправляем вопрос."""
+    telegram_id = ALLOWED_TELEGRAM_USER_ID
+    settings = await load_settings(telegram_id)
     local_date = datetime.now(ZoneInfo(settings["timezone"])).date().isoformat()
     question = SURVEYS[kind]["question"]
 
-    await bot.send_message(
-        chat_id=ALLOWED_TELEGRAM_USER_ID,
-        text=question,
-        reply_markup=MAIN_MENU,
+    survey = await create_survey(telegram_id, kind, question, local_date)
+    if not survey:
+        logging.info("Опрос %s за %s уже создан; повторная отправка пропущена", kind, local_date)
+        return
+
+    try:
+        sent = await bot.send_message(
+            chat_id=telegram_id,
+            text=question,
+            reply_markup=MAIN_MENU,
+        )
+    except Exception:
+        # Не оставляем запись о вопросе, который Telegram не принял: JobQueue сможет повторить.
+        await db_call(
+            supabase.table("daily_surveys")
+            .delete()
+            .eq("id", survey["id"])
+            .eq("telegram_id", telegram_id)
+            .execute
+        )
+        raise
+
+    # Кладём вопрос в историю с детерминированным ключом исходящего Telegram message_id.
+    await save_message(
+        telegram_id,
+        "assistant",
+        question,
+        source_update_id=sent.message_id,
+        source_item_index=2,
     )
-    await create_survey(ALLOWED_TELEGRAM_USER_ID, kind, question, local_date)
-    # Кладём вопрос и в историю переписки, чтобы модель видела, на что отвечает пользователь.
-    await save_message(ALLOWED_TELEGRAM_USER_ID, "assistant", question)
 
 
 async def send_survey_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1236,16 +1348,18 @@ async def load_reports(
 
 
 async def save_report(telegram_id: int, kind: str, start, end, content: str) -> None:
-    await db_call(
-        supabase.table("analytics_reports")
-        .insert({
-            "telegram_id": telegram_id,
-            "kind": kind,
-            "period_start": start.isoformat(),
-            "period_end": end.isoformat(),
-            "content": content,
-        })
-        .execute
+    payload = {
+        "telegram_id": telegram_id,
+        "kind": kind,
+        "period_start": start.isoformat(),
+        "period_end": end.isoformat(),
+        "content": content,
+    }
+    await idempotent_upsert(
+        "analytics_reports",
+        payload,
+        "telegram_id,kind,period_start,period_end",
+        payload,
     )
 
 
@@ -2145,16 +2259,25 @@ async def payment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     try:
         await ensure_profile(user_id)
-        await db_call(
-            supabase.table("finance_payments")
-            .insert({
-                "telegram_id": user_id,
-                "title": title,
-                "amount": amount,
-                "day_of_month": int(args[1]),
-            })
-            .execute
+        payment_payload = {
+            "telegram_id": user_id,
+            "title": title,
+            "amount": amount,
+            "day_of_month": int(args[1]),
+            "source_update_id": update.update_id,
+        }
+        payment_result = await idempotent_upsert(
+            "finance_payments",
+            payment_payload,
+            "telegram_id,source_update_id",
+            {k: v for k, v in payment_payload.items() if k != "source_update_id"},
         )
+        if not payment_result.data:
+            await update.effective_message.reply_text(
+                "Этот платёж уже был сохранён; повторную запись не создавал.",
+                reply_markup=MAIN_MENU,
+            )
+            return
     except Exception:
         logging.exception("Не удалось сохранить обязательный платёж")
         await update.effective_message.reply_text(FIN_SQL_HINT, reply_markup=MAIN_MENU)
@@ -2221,11 +2344,24 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     try:
         await ensure_profile(user_id)
-        await db_call(
-            supabase.table("finance_purchases")
-            .insert({"telegram_id": user_id, "title": title, "price": price})
-            .execute
+        purchase_payload = {
+            "telegram_id": user_id,
+            "title": title,
+            "price": price,
+            "source_update_id": update.update_id,
+        }
+        purchase_result = await idempotent_upsert(
+            "finance_purchases",
+            purchase_payload,
+            "telegram_id,source_update_id",
+            {k: v for k, v in purchase_payload.items() if k != "source_update_id"},
         )
+        if not purchase_result.data:
+            await update.effective_message.reply_text(
+                "Эта покупка уже была сохранена; повторную запись не создавал.",
+                reply_markup=MAIN_MENU,
+            )
+            return
     except Exception:
         logging.exception("Не удалось сохранить покупку")
         await update.effective_message.reply_text(FIN_SQL_HINT, reply_markup=MAIN_MENU)
@@ -2349,11 +2485,6 @@ async def buy_done_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id, "expense", float(purchase["price"]), "покупка", purchase["title"], today,
             source_update_id=update.update_id,
         )
-        if not inserted:
-            await update.effective_message.reply_text(
-                "Это действие уже было обработано ранее.", reply_markup=MAIN_MENU
-            )
-            return
         await db_call(
             supabase.table("finance_purchases")
             .update({"status": "bought"})
@@ -2361,6 +2492,12 @@ async def buy_done_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             .eq("telegram_id", user_id)
             .execute
         )
+        if not inserted:
+            await update.effective_message.reply_text(
+                "Расход уже был записан ранее; покупка помечена как купленная.",
+                reply_markup=MAIN_MENU,
+            )
+            return
     except Exception:
         logging.exception("Не удалось отметить покупку купленной")
         await update.effective_message.reply_text(FIN_SQL_HINT, reply_markup=MAIN_MENU)
@@ -2475,14 +2612,38 @@ def deadline_phrase(iso: str | None, status: str, today: dt_date) -> str:
 
 # ---------- база ----------
 
-async def pj_create(user_id: int, title: str) -> dict:
+async def pj_create(
+    user_id: int, title: str, *, source_update_id: int | None = None
+) -> dict:
     await ensure_profile(user_id)
-    result = await db_call(
+    legacy_payload = {"telegram_id": user_id, "title": title}
+    if source_update_id is None:
+        result = await db_call(
+            supabase.table("agent_projects").insert(legacy_payload).execute
+        )
+        return result.data[0]
+
+    payload = {**legacy_payload, "source_update_id": source_update_id}
+    result = await idempotent_upsert(
+        "agent_projects",
+        payload,
+        "telegram_id,source_update_id",
+        legacy_payload,
+    )
+    if result.data:
+        return result.data[0]
+
+    existing = await db_call(
         supabase.table("agent_projects")
-        .insert({"telegram_id": user_id, "title": title})
+        .select("*")
+        .eq("telegram_id", user_id)
+        .eq("source_update_id", source_update_id)
+        .limit(1)
         .execute
     )
-    return result.data[0]
+    if existing.data:
+        return existing.data[0]
+    raise RuntimeError("Не удалось получить уже созданный проект")
 
 
 async def pj_get(user_id: int, project_id: int) -> dict | None:
@@ -2494,6 +2655,23 @@ async def pj_get(user_id: int, project_id: int) -> dict | None:
         .limit(1)
         .execute
     )
+    return (result.data or [None])[0]
+
+
+async def pj_get_by_source_update(user_id: int, source_update_id: int) -> dict | None:
+    try:
+        result = await db_call(
+            supabase.table("agent_projects")
+            .select("*")
+            .eq("telegram_id", user_id)
+            .eq("source_update_id", source_update_id)
+            .limit(1)
+            .execute
+        )
+    except Exception as error:
+        if is_missing_idempotency_schema_error(error):
+            return None
+        raise
     return (result.data or [None])[0]
 
 
@@ -2552,24 +2730,58 @@ async def pj_update(user_id: int, project_id: int, **fields) -> bool:
 
 
 async def pj_add_item(
-    user_id: int, project_id: int, kind: str, content: str, due: dt_date | None
+    user_id: int,
+    project_id: int,
+    kind: str,
+    content: str,
+    due: dt_date | None,
+    *,
+    source_update_id: int | None = None,
+    source_item_index: int = 0,
 ) -> dict:
     # Defense in depth: do not rely only on the caller having checked ownership.
     project = await pj_get(user_id, project_id)
     if not project:
         raise ValueError("Проект не найден или принадлежит другому пользователю")
-    result = await db_call(
+    legacy_payload = {
+        "telegram_id": user_id,
+        "project_id": project_id,
+        "kind": kind,
+        "content": content,
+        "due_date": due.isoformat() if due else None,
+    }
+    if source_update_id is None:
+        result = await db_call(
+            supabase.table("agent_project_items").insert(legacy_payload).execute
+        )
+        return result.data[0]
+
+    payload = {
+        **legacy_payload,
+        "source_update_id": source_update_id,
+        "source_item_index": source_item_index,
+    }
+    result = await idempotent_upsert(
+        "agent_project_items",
+        payload,
+        "telegram_id,source_update_id,source_item_index",
+        legacy_payload,
+    )
+    if result.data:
+        return result.data[0]
+
+    existing = await db_call(
         supabase.table("agent_project_items")
-        .insert({
-            "telegram_id": user_id,
-            "project_id": project_id,
-            "kind": kind,
-            "content": content,
-            "due_date": due.isoformat() if due else None,
-        })
+        .select("*")
+        .eq("telegram_id", user_id)
+        .eq("source_update_id", source_update_id)
+        .eq("source_item_index", source_item_index)
+        .limit(1)
         .execute
     )
-    return result.data[0]
+    if existing.data:
+        return existing.data[0]
+    raise RuntimeError("Не удалось получить уже созданную запись проекта")
 
 
 async def pj_item_get(user_id: int, item_id: int) -> dict | None:
@@ -2673,7 +2885,7 @@ async def project_new_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     try:
-        project = await pj_create(update.effective_user.id, title)
+        project = await pj_create(update.effective_user.id, title, source_update_id=update.update_id)
     except Exception:
         logging.exception("Не удалось создать проект")
         await update.effective_message.reply_text(PJ_SQL_HINT, reply_markup=MAIN_MENU)
@@ -3009,7 +3221,7 @@ async def pj_item_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "Не нашёл проект с таким номером. Список: /projects", reply_markup=MAIN_MENU
             )
             return
-        item = await pj_add_item(user_id, project["id"], kind, content, due)
+        item = await pj_add_item(user_id, project["id"], kind, content, due, source_update_id=update.update_id)
     except Exception:
         logging.exception("Не удалось добавить запись в проект")
         await update.effective_message.reply_text(PJ_SQL_HINT, reply_markup=MAIN_MENU)
@@ -3272,8 +3484,16 @@ async def plan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        for stage in plan["stages"]:
-            await pj_add_item(user_id, plan["project_id"], "stage", stage, None)
+        for item_index, stage in enumerate(plan["stages"]):
+            await pj_add_item(
+                user_id,
+                plan["project_id"],
+                "stage",
+                stage,
+                None,
+                source_update_id=update.update_id,
+                source_item_index=item_index,
+            )
     except Exception:
         logging.exception("Не удалось сохранить этапы плана")
         await query.answer("Не удалось сохранить. Подробности в консоли.", show_alert=True)
@@ -3443,10 +3663,12 @@ async def project_action_callback(update: Update, context: ContextTypes.DEFAULT_
     try:
         kind = draft["action"]
         if kind == "create_project":
-            current = await pj_list(user_id)
-            if any(p["title"].casefold().strip() == draft["title"].casefold().strip() for p in current):
-                raise ValueError("Такой проект уже существует")
-            project = await pj_create(user_id, draft["title"])
+            project = await pj_get_by_source_update(user_id, update.update_id)
+            if not project:
+                current = await pj_list(user_id)
+                if any(p["title"].casefold().strip() == draft["title"].casefold().strip() for p in current):
+                    raise ValueError("Такой проект уже существует")
+                project = await pj_create(user_id, draft["title"], source_update_id=update.update_id)
             fields = {}
             if draft.get("description"):
                 fields["description"] = draft["description"]
@@ -3462,7 +3684,12 @@ async def project_action_callback(update: Update, context: ContextTypes.DEFAULT_
                 raise ValueError("Проект не найден или недоступен")
             item_kind = kind.removeprefix("add_")
             item = await pj_add_item(
-                user_id, project["id"], item_kind, draft["content"], draft.get("due_date")
+                user_id,
+                project["id"],
+                item_kind,
+                draft["content"],
+                draft.get("due_date"),
+                source_update_id=update.update_id,
             )
             result_text = f"Добавлено в «{project['title']}»: запись №{item['id']}."
             open_id = project["id"]
@@ -3651,12 +3878,22 @@ async def handle_project_asset(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # ===================== ОТВЕТ МОДЕЛИ =====================
 
-async def ask_ai(user_id: int, message: str, extra_system: str = "") -> str:
+async def ask_ai(
+    user_id: int,
+    message: str,
+    extra_system: str = "",
+    *,
+    source_update_id: int | None = None,
+) -> str:
     try:
         history = await load_history(user_id)
 
         # Сохраняем новое сообщение до запроса к модели.
-        await save_message(user_id, "user", message)
+        await save_message(
+            user_id, "user", message,
+            source_update_id=source_update_id,
+            source_item_index=0,
+        )
 
         # Память подгружаем отдельно: если с ней беда, бот всё равно ответит.
         try:
@@ -3740,11 +3977,21 @@ async def ask_ai(user_id: int, message: str, extra_system: str = "") -> str:
                 action = todoist_action_from_tool_call(tool_call, active_tasks)
                 if action:
                     answer = todoist_action_prompt(action)
-                    await save_message(user_id, "assistant", "Предложено действие Todoist; ожидает подтверждения пользователя.")
+                    await save_message(
+                        user_id,
+                        "assistant",
+                        "Предложено действие Todoist; ожидает подтверждения пользователя.",
+                        source_update_id=source_update_id,
+                        source_item_index=1,
+                    )
                     return answer
 
         answer = assistant_message.content or "Не удалось получить текстовый ответ."
-        await save_message(user_id, "assistant", answer)
+        await save_message(
+            user_id, "assistant", answer,
+            source_update_id=source_update_id,
+            source_item_index=1,
+        )
         return answer
 
     except Exception:
@@ -4582,7 +4829,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.exception("Не удалось проверить активный опрос")
         survey = None
 
-    answer = await ask_ai(user_id, user_message, extra_system)
+    answer = await ask_ai(
+        user_id,
+        user_message,
+        extra_system,
+        source_update_id=update.update_id,
+    )
     if answer.startswith("__TODOIST_ACTION__"):
         try:
             action = json.loads(answer[len("__TODOIST_ACTION__"):])
@@ -4618,7 +4870,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if survey:
         try:
-            await record_survey_answer(user_id, survey, user_message, answer)
+            await record_survey_answer(
+            user_id,
+            survey,
+            user_message,
+            answer,
+            source_update_id=update.update_id,
+        )
         except Exception:
             logging.exception("Не удалось сохранить ответ на опрос")
 
