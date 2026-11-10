@@ -1343,16 +1343,18 @@ async def load_reports(
 
 
 async def save_report(telegram_id: int, kind: str, start, end, content: str) -> None:
-    await db_call(
-        supabase.table("analytics_reports")
-        .insert({
-            "telegram_id": telegram_id,
-            "kind": kind,
-            "period_start": start.isoformat(),
-            "period_end": end.isoformat(),
-            "content": content,
-        })
-        .execute
+    payload = {
+        "telegram_id": telegram_id,
+        "kind": kind,
+        "period_start": start.isoformat(),
+        "period_end": end.isoformat(),
+        "content": content,
+    }
+    await idempotent_upsert(
+        "analytics_reports",
+        payload,
+        "telegram_id,kind,period_start,period_end",
+        payload,
     )
 
 
@@ -2252,16 +2254,25 @@ async def payment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     try:
         await ensure_profile(user_id)
-        await db_call(
-            supabase.table("finance_payments")
-            .insert({
-                "telegram_id": user_id,
-                "title": title,
-                "amount": amount,
-                "day_of_month": int(args[1]),
-            })
-            .execute
+        payment_payload = {
+            "telegram_id": user_id,
+            "title": title,
+            "amount": amount,
+            "day_of_month": int(args[1]),
+            "source_update_id": update.update_id,
+        }
+        payment_result = await idempotent_upsert(
+            "finance_payments",
+            payment_payload,
+            "telegram_id,source_update_id",
+            {k: v for k, v in payment_payload.items() if k != "source_update_id"},
         )
+        if not payment_result.data:
+            await update.effective_message.reply_text(
+                "Этот платёж уже был сохранён; повторную запись не создавал.",
+                reply_markup=MAIN_MENU,
+            )
+            return
     except Exception:
         logging.exception("Не удалось сохранить обязательный платёж")
         await update.effective_message.reply_text(FIN_SQL_HINT, reply_markup=MAIN_MENU)
@@ -2328,11 +2339,24 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     try:
         await ensure_profile(user_id)
-        await db_call(
-            supabase.table("finance_purchases")
-            .insert({"telegram_id": user_id, "title": title, "price": price})
-            .execute
+        purchase_payload = {
+            "telegram_id": user_id,
+            "title": title,
+            "price": price,
+            "source_update_id": update.update_id,
+        }
+        purchase_result = await idempotent_upsert(
+            "finance_purchases",
+            purchase_payload,
+            "telegram_id,source_update_id",
+            {k: v for k, v in purchase_payload.items() if k != "source_update_id"},
         )
+        if not purchase_result.data:
+            await update.effective_message.reply_text(
+                "Эта покупка уже была сохранена; повторную запись не создавал.",
+                reply_markup=MAIN_MENU,
+            )
+            return
     except Exception:
         logging.exception("Не удалось сохранить покупку")
         await update.effective_message.reply_text(FIN_SQL_HINT, reply_markup=MAIN_MENU)
