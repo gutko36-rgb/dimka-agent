@@ -686,21 +686,47 @@ async def load_day_surveys(telegram_id: int, survey_date: str) -> list[dict]:
     return result.data or []
 
 
-async def record_survey_answer(telegram_id: int, survey: dict, user_message: str, ai_answer: str) -> None:
-    """Дописываем сообщение пользователя к ответу на опрос и сохраняем вывод ИИ."""
+async def record_survey_answer(
+    telegram_id: int,
+    survey: dict,
+    user_message: str,
+    ai_answer: str,
+    *,
+    source_update_id: int | None = None,
+) -> None:
+    """Дописываем ответ; повтор того же Telegram update не добавляет текст второй раз."""
+    if source_update_id is not None and survey.get("last_answer_update_id") == source_update_id:
+        return
+
     old_answer = survey.get("answer") or ""
     new_answer = (old_answer + "\n" + user_message).strip()
-    await db_call(
+    payload = {
+        "answer": new_answer,
+        "summary": ai_answer,
+        "answered_at": datetime.now(dt_timezone.utc).isoformat(),
+    }
+    if source_update_id is not None:
+        payload["last_answer_update_id"] = source_update_id
+
+    query = (
         supabase.table("daily_surveys")
-        .update({
-            "answer": new_answer,
-            "summary": ai_answer,
-            "answered_at": datetime.now(dt_timezone.utc).isoformat(),
-        })
+        .update(payload)
         .eq("id", survey["id"])
         .eq("telegram_id", telegram_id)
-        .execute
     )
+    try:
+        await db_call(query.execute)
+    except Exception as error:
+        if "last_answer_update_id" not in payload or not is_missing_idempotency_schema_error(error):
+            raise
+        payload.pop("last_answer_update_id", None)
+        await db_call(
+            supabase.table("daily_surveys")
+            .update(payload)
+            .eq("id", survey["id"])
+            .eq("telegram_id", telegram_id)
+            .execute
+        )
 
 
 async def build_survey_context(user_id: int, survey: dict) -> str:
@@ -4724,7 +4750,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if survey:
         try:
-            await record_survey_answer(user_id, survey, user_message, answer)
+            await record_survey_answer(
+            user_id,
+            survey,
+            user_message,
+            answer,
+            source_update_id=update.update_id,
+        )
         except Exception:
             logging.exception("Не удалось сохранить ответ на опрос")
 
