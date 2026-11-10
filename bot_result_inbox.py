@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -28,7 +29,7 @@ class BotResultInbox:
     def complete(self, message_id: str) -> bool:
         response = (
             self._client.table("bot_messages")
-            .update({"status": "completed", "completed_at": "now()"})
+            .update({"status": "completed", "completed_at": datetime.now(timezone.utc).isoformat()})
             .eq("id", message_id)
             .eq("to_bot_id", self.bot_id)
             .eq("message_type", "result")
