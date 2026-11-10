@@ -26,7 +26,7 @@ class LifestylePostgresTests(unittest.TestCase):
     def setUpClass(cls):
         with psycopg.connect(DATABASE_URL) as conn:
             conn.execute((ROOT / "tests/sql/lifestyle_schema_stub.sql").read_text(encoding="utf-8"))
-            conn.execute((ROOT / "supabase/migrations/20261110130000_lifestyle_agent.sql").read_text(encoding="utf-8"))
+            conn.execute((ROOT / "supabase/migrations/20261110110130_lifestyle_agent.sql").read_text(encoding="utf-8"))
 
     def setUp(self):
         with psycopg.connect(DATABASE_URL) as conn:
