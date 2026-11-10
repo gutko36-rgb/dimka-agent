@@ -26,6 +26,7 @@ class FakeQueue:
         self.status_updates = []
         self.fail_enqueue = False
         self.fail_status = False
+        self.empty_status = False
 
     def claim_inbox(self, *, limit, lease_seconds):
         self.claim_calls.append((limit, lease_seconds))
@@ -41,7 +42,7 @@ class FakeQueue:
         if self.fail_status:
             raise RuntimeError("network failure")
         self.status_updates.append(kwargs)
-        return []
+        return [] if self.empty_status else [{"id": kwargs.get("message_id")}]
 
 
 class BotWorkerTests(unittest.TestCase):
@@ -129,6 +130,16 @@ class BotWorkerTests(unittest.TestCase):
 
         self.assertEqual(result.deferred, 1)
         self.assertEqual(len(queue.enqueued), 1)
+
+    def test_empty_status_update_is_deferred(self):
+        queue = FakeQueue([task_message()])
+        queue.empty_status = True
+        worker = BotWorker(queue, {"math.add": lambda data: {"sum": 5}})
+
+        result = worker.run_once()
+
+        self.assertEqual(result.deferred, 1)
+        self.assertEqual(result.completed, 0)
 
     def test_rejects_empty_handler_registry(self):
         with self.assertRaises(ValueError):
