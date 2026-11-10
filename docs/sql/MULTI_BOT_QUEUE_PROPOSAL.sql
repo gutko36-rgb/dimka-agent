@@ -16,7 +16,7 @@ begin;
 
 create table public.bot_registry (
     bot_id text primary key
-        check (bot_id ~ '^[a-z][a-z0-9_-]{0,63}),
+        check (bot_id ~ '^[a-z][a-z0-9_-]{0,63}$'),
     role text not null
         check (length(btrim(role)) between 1 and 80),
     display_name text not null
