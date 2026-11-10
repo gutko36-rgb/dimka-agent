@@ -6,6 +6,7 @@ The module is disabled by default until the SQL proposal is applied and verified
 from __future__ import annotations
 
 import calendar
+import uuid
 from datetime import date
 from decimal import Decimal
 from typing import Any, Callable
@@ -52,10 +53,10 @@ def build_finance_debt_handlers(
             return False
         return True
 
-    def _confirm_keyboard() -> InlineKeyboardMarkup:
+    def _confirm_keyboard(draft_id: str) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Подтвердить", callback_data="debt:confirm"),
-            InlineKeyboardButton("❌ Отмена", callback_data="debt:cancel"),
+            InlineKeyboardButton("✅ Подтвердить", callback_data=f"debt:confirm:{draft_id}"),
+            InlineKeyboardButton("❌ Отмена", callback_data=f"debt:cancel:{draft_id}"),
         ]])
 
     async def debts_command(update: Any, context: Any) -> None:
@@ -84,7 +85,9 @@ def build_finance_debt_handlers(
                 reply_markup=main_menu,
             )
             return
+        draft_id = uuid.uuid4().hex[:12]
         context.user_data["finance_debt_pending"] = {
+            "draft_id": draft_id,
             "action": "create",
             "payload": draft,
             "source_update_id": update.update_id,
@@ -101,7 +104,7 @@ def build_finance_debt_handlers(
             f"Заметка: {draft['note'] or '—'}\n\n"
             "До подтверждения база не меняется."
         )
-        await update.effective_message.reply_text(preview, reply_markup=_confirm_keyboard())
+        await update.effective_message.reply_text(preview, reply_markup=_confirm_keyboard(draft_id))
 
     async def debt_pay_command(update: Any, context: Any) -> None:
         if not await _ready(update):
@@ -126,7 +129,9 @@ def build_finance_debt_handlers(
                 reply_markup=main_menu,
             )
             return
+        draft_id = uuid.uuid4().hex[:12]
         context.user_data["finance_debt_pending"] = {
+            "draft_id": draft_id,
             "action": "payment",
             "payload": {
                 **parsed,
@@ -146,7 +151,7 @@ def build_finance_debt_handlers(
             f"Остаток после операции: {format_money(remaining - parsed['amount'])}\n"
             f"Дата: {(await user_today(update.effective_user.id)).isoformat()}\n\n"
             "Операция и финансовая транзакция будут записаны одной транзакцией PostgreSQL.",
-            reply_markup=_confirm_keyboard(),
+            reply_markup=_confirm_keyboard(draft_id),
         )
 
     async def budgets_command(update: Any, context: Any) -> None:
@@ -181,7 +186,9 @@ def build_finance_debt_handlers(
                 reply_markup=main_menu,
             )
             return
+        draft_id = uuid.uuid4().hex[:12]
         context.user_data["finance_debt_pending"] = {
+            "draft_id": draft_id,
             "action": "budget",
             "payload": draft,
             "source_update_id": update.update_id,
@@ -192,7 +199,7 @@ def build_finance_debt_handlers(
             f"Категория: {draft['category']}\n"
             f"Лимит: {format_money(draft['limit_amount'])}\n\n"
             "До подтверждения база не меняется.",
-            reply_markup=_confirm_keyboard(),
+            reply_markup=_confirm_keyboard(draft_id),
         )
 
     async def budget_weights_command(update: Any, context: Any) -> None:
@@ -218,7 +225,9 @@ def build_finance_debt_handlers(
                 reply_markup=main_menu,
             )
             return
+        draft_id = uuid.uuid4().hex[:12]
         context.user_data["finance_debt_pending"] = {
+            "draft_id": draft_id,
             "action": "weight",
             "payload": draft,
             "source_update_id": update.update_id,
@@ -227,7 +236,7 @@ def build_finance_debt_handlers(
             "Черновик веса для распределения денег:\n"
             f"Категория: {draft['category']}\nВес: {draft['weight']}\n\n"
             "Вес — относительная доля, а не процент. До подтверждения база не меняется.",
-            reply_markup=_confirm_keyboard(),
+            reply_markup=_confirm_keyboard(draft_id),
         )
 
     async def allocate_command(update: Any, context: Any) -> None:
@@ -261,14 +270,21 @@ def build_finance_debt_handlers(
             await query.answer("Учёт долгов и бюджетов выключен.", show_alert=True)
             return
         await query.answer()
-        action = (query.data or "").split(":", 1)[1]
+        parts = (query.data or "").split(":")
+        action = parts[1] if len(parts) > 1 else ""
+        token = parts[2] if len(parts) > 2 else ""
+        draft = context.user_data.get("finance_debt_pending")
+        if not draft or not token or draft.get("draft_id") != token:
+            await query.edit_message_text(
+                "Эта кнопка относится к устаревшему черновику. Используй последнее сообщение с предпросмотром."
+            )
+            return
         if action == "cancel":
             context.user_data.pop("finance_debt_pending", None)
             await query.edit_message_text("Отменено. Данные в Supabase не изменялись.")
             return
-        draft = context.user_data.get("finance_debt_pending")
-        if action != "confirm" or not draft:
-            await query.edit_message_text("Черновик не найден или уже обработан. Повтори команду.")
+        if action != "confirm":
+            await query.edit_message_text("Неизвестное действие. Повтори команду.")
             return
         user_id = update.effective_user.id
         payload = draft["payload"]
