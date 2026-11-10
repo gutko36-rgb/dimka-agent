@@ -97,6 +97,31 @@ class BotQueuePostgresTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_claim_ignores_non_task_messages(self):
+        conn = self.bot_connection("dimka")
+        try:
+            conn.execute(
+                """
+                INSERT INTO public.bot_messages
+                    (task_id, from_bot_id, to_bot_id, message_type, payload, idempotency_key)
+                VALUES
+                    (gen_random_uuid(), 'dimka', 'finance', 'result', '{}'::jsonb, 'result-not-a-task')
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        conn = self.bot_connection("finance")
+        try:
+            rows = conn.execute(
+                "SELECT id FROM public.claim_bot_messages(10, 300)"
+            ).fetchall()
+            self.assertEqual(rows, [])
+            conn.commit()
+        finally:
+            conn.close()
+
     def test_sender_cannot_spoof_another_bot_identity(self):
         conn = self.bot_connection("dimka")
         try:
