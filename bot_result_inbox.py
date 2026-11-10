@@ -117,6 +117,78 @@ def _format_finance_result(task_type: str, body: dict[str, Any]) -> str | None:
     return None
 
 
+def _format_project_result(task_type: str, body: dict[str, Any]) -> str | None:
+    if task_type != "projects.summary":
+        return None
+    status_names = {"idea": "Идея", "active": "В работе", "paused": "На паузе", "done": "Завершён"}
+    lines = [f"📁 Агент проектов: {str(body.get('title', 'Проект'))[:120]}"]
+    if body.get("project_id") is not None:
+        lines[0] += f" · №{body['project_id']}"
+    status = str(body.get("status", ""))
+    lines.append(f"Статус: {status_names.get(status, status or '—')}")
+    if body.get("deadline"):
+        deadline_line = f"Срок: {body['deadline']}"
+        if body.get("project_overdue"):
+            deadline_line += " · ПРОСРОЧЕН"
+        lines.append(deadline_line)
+    if body.get("goal"):
+        lines.append(f"Цель: {str(body['goal'])[:300]}")
+    if body.get("description"):
+        lines.append(f"Описание: {str(body['description'])[:300]}")
+
+    for key, label in (("stage_progress", "Этапы"), ("task_progress", "Задачи")):
+        progress = body.get(key)
+        if isinstance(progress, dict):
+            lines.append(f"{label}: {progress.get('done', 0)}/{progress.get('total', 0)} выполнено")
+
+    overdue = body.get("overdue_items")
+    if isinstance(overdue, list) and overdue:
+        lines.extend(["", "⚠️ Просрочено:"])
+        for item in overdue[:10]:
+            if isinstance(item, dict):
+                lines.append(f"- {str(item.get('content', ''))[:120]} · до {item.get('due_date', '—')}")
+        if len(overdue) > 10:
+            lines.append(f"…и ещё {len(overdue) - 10}")
+
+    upcoming = body.get("upcoming_items")
+    if isinstance(upcoming, list) and upcoming:
+        lines.extend(["", "Ближайшие 14 дней:"])
+        for item in upcoming[:10]:
+            if isinstance(item, dict):
+                lines.append(f"- {str(item.get('content', ''))[:120]} · до {item.get('due_date', '—')}")
+
+    stages = body.get("stages")
+    if isinstance(stages, list) and stages:
+        lines.extend(["", "Этапы:"])
+        for item in stages[:20]:
+            if isinstance(item, dict):
+                mark = "✅" if item.get("done") else "⬜"
+                due = f" · до {item['due_date']}" if item.get("due_date") else ""
+                lines.append(f"{mark} {str(item.get('content', ''))[:120]}{due}")
+
+    tasks = body.get("tasks")
+    if isinstance(tasks, list) and tasks:
+        lines.extend(["", "Задачи:"])
+        for item in tasks[:20]:
+            if isinstance(item, dict):
+                mark = "✅" if item.get("done") else "⬜"
+                due = f" · до {item['due_date']}" if item.get("due_date") else ""
+                lines.append(f"{mark} {str(item.get('content', ''))[:120]}{due}")
+    if body.get("remaining_task_count"):
+        lines.append(f"…и ещё задач: {body['remaining_task_count']}")
+
+    notes = body.get("notes")
+    if isinstance(notes, list) and notes:
+        lines.extend(["", "Последние заметки:"])
+        for item in notes[-5:]:
+            if isinstance(item, dict):
+                lines.append(f"- {str(item.get('content', ''))[:160]}")
+
+    if body.get("result"):
+        lines.extend(["", f"Результат: {str(body['result'])[:300]}"])
+    return "\n".join(lines)
+
+
 def format_result_message(message: dict[str, Any]) -> str:
     if not isinstance(message, dict) or message.get("message_type") != "result":
         raise ValueError("Only result messages can be formatted")
@@ -136,12 +208,17 @@ def format_result_message(message: dict[str, Any]) -> str:
             formatted = _format_finance_result(task_type, body)
             if formatted is not None:
                 return formatted
+        if sender == "projects" and isinstance(body, dict):
+            formatted = _format_project_result(task_type, body)
+            if formatted is not None:
+                return formatted
         heading = f"Результат от {title}"
     else:
         error_code = payload.get("error", "worker_failed")
-        if sender == "finance":
+        if sender in {"finance", "projects"}:
+            agent_name = "Финансовый агент" if sender == "finance" else "Агент проектов"
             safe_code = str(error_code)[:80]
-            return f"⚠️ Финансовый агент не смог обработать запрос.\nКод ошибки: {safe_code}"
+            return f"⚠️ {agent_name} не смог обработать запрос.\nКод ошибки: {safe_code}"
         body = {"error": error_code}
         heading = f"Не удалось выполнить задачу у {title}"
     rendered = json.dumps(body, ensure_ascii=False, indent=2, default=str)
