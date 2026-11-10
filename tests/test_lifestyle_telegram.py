@@ -126,13 +126,27 @@ class LifestyleTelegramTests(unittest.IsolatedAsyncioTestCase):
         callback_update = SimpleNamespace(effective_user=self.user, callback_query=query)
         await self.handlers["callback"](callback_update, self.context)
         self.assertTrue(any(call[0] == "update_goal_progress" for call in self.store.calls))
-        self.assertIn("50%", query.edits[-1][0])
+        self.assertIn("50.00%", query.edits[-1][0])
 
     async def test_habit_log_requires_confirmation(self):
         self.context.args = ["7", "|", "done", "|", "Прогулка"]
         await self.handlers["habit_log"](self.update, self.context)
         self.assertFalse(any(call[0] == "log_habit" for call in self.store.calls))
         self.assertIn("Черновик отметки привычки", self.message.replies[-1][0])
+
+    async def test_confirm_habit_log(self):
+        self.context.args = ["7", "|", "done", "|", "Прогулка"]
+        await self.handlers["habit_log"](self.update, self.context)
+        token = self.context.user_data["lifestyle_pending"]["draft_id"]
+        query = FakeQuery("life:confirm:" + token)
+        callback_update = SimpleNamespace(effective_user=self.user, callback_query=query)
+        await self.handlers["callback"](callback_update, self.context)
+        calls = [call for call in self.store.calls if call[0] == "log_habit"]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1], 42)
+        self.assertEqual(calls[0][2], 7)
+        self.assertEqual(calls[0][3]["source_update_id"], 93001)
+        self.assertIn("Отметка сохранена", query.edits[-1][0])
 
     async def test_old_button_cannot_confirm_a_newer_draft(self):
         self.context.args = ["Английский", "|", "-", "|", "-"]
